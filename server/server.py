@@ -107,16 +107,19 @@ class WireServer:
             elif msg_type_received == Operations.LOGOUT.value:
                 response = self.logout(payload_received[0])
                 self.package_send(response, conn)
+            elif msg_type_received == Operations.LIST_ACCOUNTS.value:
+                response = self.list_accounts()
+                self.package_send(response, conn)
             elif msg_type_received == Operations.SEND_MESSAGE.value:
                 if payload_received[0] == self.DISCONNECT_MESSAGE:
                     connected = False
-                    response = self.payload(Operations.SUCCESS, "")
+                    response = self.payload(Operations.SUCCESS, [""])
                 else:
                     # Expect info to be a string with sender, receiver, msg separated by newline.
                     try:
                         sender, receiver, msg = payload_received[0].split("\n")
                     except ValueError:
-                        response = self.payload(Operations.FAILURE, "Invalid message format.")
+                        response = self.payload(Operations.FAILURE, ["Invalid message format."])
                         self.package_send(response, conn)
                         continue
                     response = self.send_message(sender, receiver, msg)
