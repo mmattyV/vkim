@@ -110,6 +110,7 @@ class ChatClient:
                     self.check_username_event.set()
                 elif operation == Operations.SUCCESS and "Auth successful" in payload:
                     self.username = payload[0]
+                    print("Logged in as:", self.username)
         except ValueError:
             print(f"Unknown message type received: {msg_type}, Payload: {payload}")
 
@@ -157,7 +158,8 @@ class ChatClient:
         if not username or not password:
             print("Username and password cannot be empty.")
             return
-        self.send_message(Operations.LOGIN, [username, password])
+        hashed_password = hash_password(password)
+        self.send_message(Operations.LOGIN, [username, hashed_password.decode('utf-8')])
 
     def send_chat_message(self):
         """Handle sending a chat message."""
