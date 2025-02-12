@@ -99,8 +99,10 @@ class WireServer:
                 self.package_send(response, conn)
             if msg_type_received == Operations.CREATE_ACCOUNT.value:
                 # Assume payload[0] is the username.
-                print('hello 2')
                 response = self.create_account(payload_received[0], conn)
+                self.package_send(response, conn)
+            elif msg_type_received == Operations.DELETE_ACCOUNT.value:
+                response = self.delete_account(payload_received[0])
                 self.package_send(response, conn)
             elif msg_type_received == Operations.LOGIN.value:
                 response = self.login(payload_received[0], conn)
@@ -129,6 +131,10 @@ class WireServer:
                     if receiver in self.ACTIVE_USERS:
                         msg_data = self.deliver_msgs_immediately(msg)
                         self.package_send(msg_data, self.ACTIVE_USERS[receiver])
+                self.package_send(response, conn)
+            elif msg_type_received == Operations.DELETE_MESSAGE.value:
+                # Expected payload: [username, delete_info]
+                response = self.delete_message(payload_received[0], payload_received[1])
                 self.package_send(response, conn)
 
             elif msg_type_received == Operations.VIEW_UNDELIVERED_MESSAGES.value:
