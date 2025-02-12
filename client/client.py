@@ -84,6 +84,7 @@ class ChatClient:
 
     def handle_server_response(self, msg_type, payload):
         """Handle and display the server's response."""
+        print('alive')
         try:
             operation = Operations(msg_type)
             if operation == Operations.RECEIVE_CURRENT_MESSAGE:
@@ -174,12 +175,9 @@ class ChatClient:
 
 
 if __name__ == "__main__":
-    import argparse
+    PORT = 5050  # Port to listen on
+    SERVER_HOST_NAME = socket.gethostname()  # Host name of the machine
+    SERVER_HOST = socket.gethostbyname(SERVER_HOST_NAME)  # IPv4 address of the machine
 
-    parser = argparse.ArgumentParser(description="Chat Client")
-    parser.add_argument('--host', type=str, default='localhost', help='Server host')
-    parser.add_argument('--port', type=int, default=5050, help='Server port')
-    args = parser.parse_args()
-
-    client = ChatClient(host=args.host, port=args.port)
+    client = ChatClient(host=SERVER_HOST, port=PORT)
     client.run()
