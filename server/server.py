@@ -129,7 +129,7 @@ class WireServer:
                     response = self.send_message(sender, receiver, msg)
                     # If the recipient is active, deliver immediately.
                     if receiver in self.ACTIVE_USERS:
-                        msg_data = self.deliver_msgs_immediately(msg)
+                        msg_data = self.deliver_msgs_immediately(msg, sender)
                         self.package_send(msg_data, self.ACTIVE_USERS[receiver])
                 self.package_send(response, conn)
             elif msg_type_received == Operations.DELETE_MESSAGE.value:
@@ -275,11 +275,11 @@ class WireServer:
                 self.USERS[receiver].queue_message(full_message)
                 return self.payload(Operations.SUCCESS, ["Message queued for later delivery."])
 
-    def deliver_msgs_immediately(self, msg):
+    def deliver_msgs_immediately(self, msg, sender):
         """
         Prepares a payload for immediate message delivery.
         """
-        return self.payload(Operations.RECEIVE_CURRENT_MESSAGE, [msg])
+        return self.payload(Operations.RECEIVE_CURRENT_MESSAGE, [msg, sender])
 
     def view_msgs(self, username, count):
         """
