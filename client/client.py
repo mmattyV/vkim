@@ -138,7 +138,7 @@ class ChatClient:
             operation = Operations(msg_type)
             if operation == Operations.RECEIVE_CURRENT_MESSAGE:
                 # Display the incoming message immediately
-                print(f"\n[New Message]: {payload[0]}")
+                print(f"\n[New Message from {payload[1]}]: {payload[0]}")
                 return  # Return early to avoid processing it as part of current_operation
 
             # For all other operations, proceed as before
