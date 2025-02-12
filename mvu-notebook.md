@@ -93,4 +93,9 @@
 - Prepare to both give and receive constructive feedback.
 
 # 2/11/25:
-- 
+- Serialization:
+    - Using enums to encode operation types
+    - Encode using utf-8
+    - struct.pack to increase simplicity
+    - Lists to increase space efficiency and simplicity
+    - Unit tests
