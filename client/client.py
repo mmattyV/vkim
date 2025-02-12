@@ -77,7 +77,8 @@ class ChatClient:
                     break
 
                 msg_type, payload_length = struct.unpack("!I I", header)
-                print('Received header:', header)
+
+                print('\nReceived header:', header)
                 print('Payload length:', payload_length)
 
                 # Now receive the payload.
@@ -102,12 +103,12 @@ class ChatClient:
                 # Display the incoming message.
                 print(f"\n[New Message]: {payload[0]}")
             else:
-                print(f"Server Response: {operation.name}, Payload: {payload}")
+                print(f"Server Response: {operation.name}, Payload: {payload}\n")
                 # If the response is for a username check, signal the waiting thread.
                 if operation in (Operations.ACCOUNT_DOES_NOT_EXIST, Operations.ACCOUNT_ALREADY_EXISTS):
                     self.account_exists_response = operation
                     self.check_username_event.set()
-                elif operation == Operations.SUCCESS and "Login successful" in payload:
+                elif operation == Operations.SUCCESS and "Auth successful" in payload:
                     self.username = payload[0]
         except ValueError:
             print(f"Unknown message type received: {msg_type}, Payload: {payload}")
