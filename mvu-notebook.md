@@ -1,3 +1,5 @@
+# 2/10/25:
+
 # Phase 1: Wire Protocol & Data Structures
 
 ## Design Your Message Formats
@@ -89,3 +91,6 @@
 ## Prepare for Code Reviews
 - Organize your code repository and documentation.
 - Prepare to both give and receive constructive feedback.
+
+# 2/11/25:
+- 
