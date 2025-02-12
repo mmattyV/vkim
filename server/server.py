@@ -157,15 +157,6 @@ class WireServer:
             thread.start()
             print(f"[ACTIVE CONNECTIONS] {threading.active_count() - 1}")
             
-    def create_account(self, username, conn):
-        with self.USER_LOCK:
-            if username in self.USERS:
-                return self.payload(Operations.ACCOUNT_ALREADY_EXISTS, "Account already exists")
-            new_user = User(username)
-            self.USERS[username] = new_user
-            self.ACTIVE_USERS[username] = conn
-        return self.payload(Operations.SUCCESS, "Account created successfully")
-    
     def check_username(self, username):
         """
         Checks if a username already exists.
@@ -180,16 +171,19 @@ class WireServer:
         with self.USER_LOCK:
             if username in self.USERS:
                 # The account already exists; prompt the client for a password (login).
-                return self.payload(
-                    Operations.ACCOUNT_ALREADY_EXISTS,
-                    "Account exists. Please supply your password to log in."
-                )
+                return self.payload(Operations.ACCOUNT_ALREADY_EXISTS, "")
             else:
                 # The account does not exist; prompt the client to create a new account by supplying a password.
-                return self.payload(
-                    Operations.ACCOUNT_DOES_NOT_EXIST,
-                    "No account found. Please supply a password to sign up."
-                )
+                return self.payload(Operations.ACCOUNT_DOES_NOT_EXIST, "")
+            
+    def create_account(self, username, conn):
+        with self.USER_LOCK:
+            if username in self.USERS:
+                return self.payload(Operations.ACCOUNT_ALREADY_EXISTS, "")
+            new_user = User(username)
+            self.USERS[username] = new_user
+            self.ACTIVE_USERS[username] = conn
+        return self.payload(Operations.SUCCESS, "")
 
     def login(self, username, conn):
         with self.USER_LOCK:
