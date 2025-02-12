@@ -20,11 +20,10 @@ class WireServer:
     PORT = 5050  # Port to listen on
     SERVER_HOST_NAME = socket.gethostname()  # Host name of the machine
     SERVER_HOST = socket.gethostbyname(SERVER_HOST_NAME)  # IPv4 address of the machine
-    HEADER = 64  # Fixed header length in bytes for message length
+    HEADER = 8  # Fixed header length in bytes for message length
     FORMAT = "utf-8"  # Encoding/decoding format
     DISCONNECT_MESSAGE = "!DISCONNECT"  # Special disconnect message
     ADDR = (SERVER_HOST, PORT)
-    VERSION = "1"                        # Protocol version
 
     # Globals for account management
     USER_LOCK = threading.Lock()
