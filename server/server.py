@@ -124,7 +124,7 @@ class WireServer:
     def create_account(self, username, conn):
         with self.USER_LOCK:
             if username in self.USERS:
-                return self.payload(Operations.ACCOUNT_ALREADY_EXISTS, "")
+                return self.payload(Operations.ACCOUNT_ALREADY_EXISTS, "Account already exists")
             new_user = User(username)
             self.USERS[username] = new_user
             self.ACTIVE_USERS[username] = conn
