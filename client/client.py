@@ -47,6 +47,10 @@ class ChatClient:
         self.send_message_event = threading.Event()
         self.send_message_response = None  # Will store the server's response
 
+        # Event and Response for DELETE_ACCOUNT
+        self.delete_account_event = threading.Event()
+        self.delete_account_response = None  # Will store the server's response
+
         # Track the current operation awaiting a response
         self.current_operation = None
 
@@ -236,6 +240,24 @@ class ChatClient:
                     print("Unexpected response for SEND_MESSAGE operation.")
                     self.send_message_event.set()  # Unblock to prevent hanging
 
+            elif current_op == 'delete_account':
+                if operation == Operations.SUCCESS:
+                    success_message = payload[0] if payload else "Account deleted successfully. You have been logged out."
+                    print(success_message)
+                    self.delete_account_response = Operations.SUCCESS
+                    self.delete_account_event.set()
+                    # Automatically log out the user
+                    self.username = None
+                    self.number_unread_messages = 0
+                elif operation in (Operations.FAILURE, Operations.ACCOUNT_DOES_NOT_EXIST):
+                    error_message = payload[0] if payload else "Failed to delete account."
+                    print(f"Failed to delete account: {error_message}")
+                    self.delete_account_response = operation
+                    self.delete_account_event.set()
+                else:
+                    print("Unexpected response for DELETE_ACCOUNT operation.")
+                    self.delete_account_event.set()  # Unblock to prevent hanging
+
             # Handle other operations similarly if needed
             else:
                 print(f"Unhandled current operation: {current_op}")
@@ -416,6 +438,46 @@ class ChatClient:
         with self.operation_lock:
             self.current_operation = None
 
+    def delete_account(self):
+        """Handle deleting the logged-in user's account."""
+        if not self.username:
+            print("You must be logged in to delete your account.")
+            return
+
+        confirmation = input("Are you sure you want to delete your account? This action cannot be undone. (yes/no): ").strip().lower()
+        if confirmation != 'yes':
+            print("Account deletion canceled.")
+            return
+
+        # Set current operation
+        with self.operation_lock:
+            self.current_operation = 'delete_account'
+
+        # Clear the event and reset the response
+        self.delete_account_event.clear()
+        self.delete_account_response = None
+
+        # Send the DELETE_ACCOUNT request
+        self.send_message(Operations.DELETE_ACCOUNT, [self.username])
+        print("Waiting for delete account response...", flush=True)
+
+        # Wait for the server's response (with a timeout)
+        if self.delete_account_event.wait(timeout=10):
+            if self.delete_account_response == Operations.SUCCESS:
+                # Success message already printed in handle_server_response
+                pass
+            elif self.delete_account_response in (Operations.FAILURE, Operations.ACCOUNT_DOES_NOT_EXIST):
+                # Failure message already printed in handle_server_response
+                pass
+            else:
+                print("Unexpected delete account response.")
+        else:
+            print("No response from server. Please try again later.")
+
+        # Reset current_operation
+        with self.operation_lock:
+            self.current_operation = None
+
     def logout(self):
         """Handle user logout."""
         if not self.username:
@@ -462,11 +524,12 @@ class ChatClient:
                     print("2. Log In")
                     print("3. Exit")
                 else:
-                    # Logged in: show limited options (list accounts, send message, logout, exit)
+                    # Logged in: show limited options (list accounts, send message, delete account, logout, exit)
                     print("1. List Accounts")
                     print("2. Send Message")
-                    print("3. Logout")
-                    print("4. Exit")
+                    print("3. Delete Account")
+                    print("4. Logout")
+                    print("5. Exit")
                 sys.stdout.flush()
 
                 choice = input("Enter choice number: ").strip()
@@ -489,8 +552,10 @@ class ChatClient:
                     elif choice == '2':
                         self.send_chat_message()
                     elif choice == '3':
-                        self.logout()
+                        self.delete_account()
                     elif choice == '4':
+                        self.logout()
+                    elif choice == '5':
                         self.close()
                         break
                     else:
