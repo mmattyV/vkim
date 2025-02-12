@@ -213,7 +213,7 @@ class WireServer:
             self.ACTIVE_USERS[username] = conn
             user_obj = self.USERS[username]
             unread_count = user_obj.undelivered_messages.qsize()
-        return self.payload(Operations.SUCCESS, [username, "Auth successful", unread_count])
+        return self.payload(Operations.SUCCESS, [username, "Auth successful", f"{unread_count}"])
 
     def login(self, username, conn):
         with self.USER_LOCK:
@@ -224,7 +224,7 @@ class WireServer:
                 # Return the username along with a success message and the unread count.
                 return self.payload(
                     Operations.SUCCESS, 
-                    [username, "Auth successful", unread_count]
+                    [username, "Auth successful", f"{unread_count}"]
                 )
         return self.payload(Operations.FAILURE, ["Auth unsuccessful"])
 
@@ -280,6 +280,20 @@ class WireServer:
                 return self.payload(Operations.FAILURE, ["No undelivered messages."])
             messages = "\n".join(user_obj.get_current_messages())
         return self.payload(Operations.SUCCESS, [messages, "Messages retrieved"])
+    
+    def delete_account(self, username):
+        with self.USER_LOCK:
+            if username not in self.USERS:
+                return self.payload(Operations.ACCOUNT_DOES_NOT_EXIST, ["Account does not exist."])
+            user_obj = self.USERS[username]
+            if not user_obj.undelivered_messages.empty():
+                return self.payload(Operations.FAILURE, ["Cannot delete account with unread messages."])
+            # Delete from both USERS and ACTIVE_USERS if present.
+            del self.USERS[username]
+            if username in self.ACTIVE_USERS:
+                del self.ACTIVE_USERS[username]
+        return self.payload(Operations.SUCCESS, ["Account deleted successfully."])
+
 
     def delete_message(self, username, delete_info):
         """
