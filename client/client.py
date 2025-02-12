@@ -47,6 +47,14 @@ class ChatClient:
         self.send_message_event = threading.Event()
         self.send_message_response = None  # Will store the server's response
 
+        # Event and Response for VIEW_UNDELIVERED_MESSAGES
+        self.view_msgs_event = threading.Event()
+        self.view_msgs_response = None  # Will store the server's response
+
+        # Event and Response for DELETE_MESSAGE
+        self.delete_message_event = threading.Event()
+        self.delete_message_response = None  # Will store the server's response
+
         # Event and Response for DELETE_ACCOUNT
         self.delete_account_event = threading.Event()
         self.delete_account_response = None  # Will store the server's response
@@ -239,6 +247,47 @@ class ChatClient:
                 else:
                     print("Unexpected response for SEND_MESSAGE operation.")
                     self.send_message_event.set()  # Unblock to prevent hanging
+
+            elif current_op == 'view_msgs':
+                if operation == Operations.SUCCESS:
+                    messages = payload[0]  # Joined messages as a single string
+                    count_info = payload[1]  # e.g., "3 messages delivered."
+                    try:
+                        message_count = int(count_info.split()[0])
+                        self.number_unread_messages -= message_count
+                        if self.number_unread_messages < 0:
+                            self.number_unread_messages = 0  # Prevent negative counts
+                    except (IndexError, ValueError):
+                        print("Error parsing message count.")
+                    print("Received Messages:")
+                    print(messages)
+                    print(count_info)
+                    print("Number of unread messages:", self.number_unread_messages)
+                    self.view_msgs_response = Operations.SUCCESS
+                    self.view_msgs_event.set()
+                elif operation == Operations.FAILURE:
+                    error_message = payload[0] if payload else "Failed to retrieve messages."
+                    print(f"Failed to retrieve messages: {error_message}")
+                    self.view_msgs_response = Operations.FAILURE
+                    self.view_msgs_event.set()
+                else:
+                    print("Unexpected response for VIEW_UNDELIVERED_MESSAGES operation.")
+                    self.view_msgs_event.set()  # Unblock to prevent hanging
+
+            elif current_op == 'delete_message':
+                if operation == Operations.SUCCESS:
+                    success_message = payload[0] if payload else "Messages deleted successfully."
+                    print(success_message)
+                    self.delete_message_response = Operations.SUCCESS
+                    self.delete_message_event.set()
+                elif operation == Operations.FAILURE:
+                    error_message = payload[0] if payload else "Failed to delete messages."
+                    print(f"Failed to delete messages: {error_message}")
+                    self.delete_message_response = Operations.FAILURE
+                    self.delete_message_event.set()
+                else:
+                    print("Unexpected response for DELETE_MESSAGE operation.")
+                    self.delete_message_event.set()  # Unblock to prevent hanging
 
             elif current_op == 'delete_account':
                 if operation == Operations.SUCCESS:
@@ -438,6 +487,103 @@ class ChatClient:
         with self.operation_lock:
             self.current_operation = None
 
+    def view_messages(self):
+        """Handle viewing undelivered messages."""
+        if not self.username:
+            print("You must be logged in to view messages.")
+            return
+
+        try:
+            count_input = input("Enter the number of messages to retrieve: ").strip()
+            if not count_input:
+                print("Number of messages cannot be empty.")
+                return
+            count = int(count_input)
+            if count <= 0:
+                print("Please enter a positive integer.")
+                return
+        except ValueError:
+            print("Invalid number entered.")
+            return
+
+        # Set current operation
+        with self.operation_lock:
+            self.current_operation = 'view_msgs'
+
+        # Clear the event and reset the response
+        self.view_msgs_event.clear()
+        self.view_msgs_response = None
+
+        # Send the VIEW_UNDELIVERED_MESSAGES request
+        self.send_message(Operations.VIEW_UNDELIVERED_MESSAGES, [self.username, str(count)])
+        print("Waiting for messages...", flush=True)
+
+        # Wait for the server's response (with a timeout)
+        if self.view_msgs_event.wait(timeout=10):
+            if self.view_msgs_response == Operations.SUCCESS:
+                # Messages already printed in handle_server_response
+                pass
+            elif self.view_msgs_response == Operations.FAILURE:
+                # Error message already printed in handle_server_response
+                pass
+            else:
+                print("Unexpected view messages response.")
+        else:
+            print("No response from server. Please try again later.")
+
+        # Reset current_operation
+        with self.operation_lock:
+            self.current_operation = None
+
+    def delete_messages(self):
+        """Handle deleting undelivered messages."""
+        if not self.username:
+            print("You must be logged in to delete messages.")
+            return
+
+        delete_info = input("Enter 'ALL' to delete all messages or the number of messages to delete: ").strip()
+        if not delete_info:
+            print("Delete info cannot be empty.")
+            return
+        if delete_info.upper() != 'ALL':
+            try:
+                count = int(delete_info)
+                if count <= 0:
+                    print("Please enter a positive integer or 'ALL'.")
+                    return
+            except ValueError:
+                print("Invalid input. Enter a positive integer or 'ALL'.")
+                return
+
+        # Set current operation
+        with self.operation_lock:
+            self.current_operation = 'delete_message'
+
+        # Clear the event and reset the response
+        self.delete_message_event.clear()
+        self.delete_message_response = None
+
+        # Send the DELETE_MESSAGE request
+        self.send_message(Operations.DELETE_MESSAGE, [self.username, delete_info.upper()])
+        print("Waiting for delete message response...", flush=True)
+
+        # Wait for the server's response (with a timeout)
+        if self.delete_message_event.wait(timeout=10):
+            if self.delete_message_response == Operations.SUCCESS:
+                # Success message already printed in handle_server_response
+                pass
+            elif self.delete_message_response == Operations.FAILURE:
+                # Error message already printed in handle_server_response
+                pass
+            else:
+                print("Unexpected delete message response.")
+        else:
+            print("No response from server. Please try again later.")
+
+        # Reset current_operation
+        with self.operation_lock:
+            self.current_operation = None
+
     def delete_account(self):
         """Handle deleting the logged-in user's account."""
         if not self.username:
@@ -524,12 +670,14 @@ class ChatClient:
                     print("2. Log In")
                     print("3. Exit")
                 else:
-                    # Logged in: show limited options (list accounts, send message, delete account, logout, exit)
+                    # Logged in: show options including view messages
                     print("1. List Accounts")
                     print("2. Send Message")
-                    print("3. Delete Account")
-                    print("4. Logout")
-                    print("5. Exit")
+                    print("3. View Messages")
+                    print("4. Delete Messages")
+                    print("5. Delete Account")
+                    print("6. Logout")
+                    print("7. Exit")
                 sys.stdout.flush()
 
                 choice = input("Enter choice number: ").strip()
@@ -552,10 +700,14 @@ class ChatClient:
                     elif choice == '2':
                         self.send_chat_message()
                     elif choice == '3':
-                        self.delete_account()
+                        self.view_messages()
                     elif choice == '4':
-                        self.logout()
+                        self.delete_messages()
                     elif choice == '5':
+                        self.delete_account()
+                    elif choice == '6':
+                        self.logout()
+                    elif choice == '7':
                         self.close()
                         break
                     else:

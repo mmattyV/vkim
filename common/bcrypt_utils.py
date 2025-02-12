@@ -6,14 +6,11 @@ def hash_password(plain_password: str) -> bytes:
     Hashes a plaintext password using bcrypt.
     Returns the hashed password as bytes.
     """
-    # Generate a salt and hash the password.
-    salt = bcrypt.gensalt()
-    hashed = bcrypt.hashpw(plain_password.encode('utf-8'), salt)
-    return hashed
+    # Hash the password.
+    # Ensure the fixed salt is correctly formatted
+    fixed_salt = b"$2b$12$abcdefghijklmnopqrstuv" 
 
-def verify_password(plain_password: str, hashed_password: bytes) -> bool:
-    """
-    Verifies that a plaintext password matches the given hashed password.
-    Returns True if they match, False otherwise.
-    """
-    return bcrypt.checkpw(plain_password.encode('utf-8'), hashed_password)
+    # Hash the password using the fixed salt
+    hashed = bcrypt.hashpw(plain_password.encode('utf-8'), fixed_salt)
+
+    return hashed
