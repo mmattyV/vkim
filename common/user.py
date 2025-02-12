@@ -1,7 +1,7 @@
 from queue import Queue
 
 class User:
-    def __init__(self, username):
+    def __init__(self, username, password):
         self.username = username
         self.password = password  # Store the hashed password here.
         # Queue for messages not yet delivered (i.e. unread)
