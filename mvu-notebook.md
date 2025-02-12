@@ -99,3 +99,106 @@
     - struct.pack to increase simplicity
     - Lists to increase space efficiency and simplicity
     - Unit tests
+
+# **Engineering Notebook Entry – 2/12/25**
+---
+
+## **Observations & Programming Choices in Client Implementation**
+
+### **1. Choice of Wire Protocol**
+- **Custom Binary Serialization**: Instead of using JSON, I opted for a custom binary protocol to ensure **compactness, speed, and efficiency** when transmitting messages between the client and server.
+- **Field Order and Encoding**:
+    - Used **4-byte operation codes** (`Operations` enum) for clarity.
+    - **Payload length** is included as a 4-byte integer for efficient parsing.
+    - **UTF-8 encoding** is used for string-based data.
+- **Why `struct.pack()`?**
+    - **Simplicity**: `struct.pack` ensures precise control over message formatting.
+    - **Performance**: More efficient than JSON parsing.
+    - **Reliability**: Less prone to errors than delimiter-based string parsing.
+
+---
+
+### **2. Threading Considerations in Client**
+- **Separate Thread for Receiving Messages**:
+    - A dedicated thread continuously listens for incoming messages to ensure **non-blocking** execution.
+    - This prevents message reception from interfering with UI interactions or user inputs.
+- **Synchronization using Threading Events**:
+    - Introduced `threading.Event()` to synchronize server responses.
+    - This ensures that `send_message()` blocks until the appropriate response is received.
+
+#### **Why use Events instead of just waiting?**
+- Avoids busy-waiting (which wastes CPU cycles).
+- Allows timeout-based handling for robustness.
+- Simplifies debugging since responses are explicitly acknowledged.
+
+---
+
+### **3. Handling Server Responses Efficiently**
+- **Operation-Based Routing**:
+    - The function `handle_server_response()` routes responses based on the **operation type** (`Operations` enum).
+    - Maintains a **consistent structure** for handling each operation.
+- **Tracking the Current Operation**:
+    - Used `self.current_operation` to track which request is awaiting a response.
+    - Helps avoid **race conditions** when multiple requests are in flight.
+
+#### **Why Track Operations?**
+- Avoids unnecessary responses being processed when multiple requests are being handled concurrently.
+- Ensures that each request-response pair is properly **matched and acknowledged**.
+
+---
+
+### **4. Security Considerations in Authentication**
+- **SHA-256 with a Fixed Salt for Password Hashing**:
+    - Chose SHA-256 (instead of bcrypt) for **simplicity and performance**.
+    - Used a **fixed salt** to ensure that the hashing method remains deterministic across different runs.
+    - *Note:* Fixed salts have security weaknesses (susceptibility to rainbow table attacks), so in the future, moving to **per-user salts** would be beneficial.
+
+#### **Why not send plaintext passwords?**
+- Always send **hashed passwords** to prevent eavesdropping risks.
+- Avoids reliance on TLS for security (though TLS is still recommended for transport-layer encryption).
+
+---
+
+### **5. GUI Considerations in `gui_client.py`**
+- **Ensuring UI Responsiveness**:
+    - All **network interactions** (e.g., `list_accounts()`, `send_message()`) occur **in separate threads**.
+    - Used `self.master.after(0, callback, args...)` to **update the UI from the main thread** and avoid `_tkinter.TclError`.
+- **Separation of Concerns**:
+    - The client class **only handles networking** and does not interact with the UI.
+    - The GUI class calls the client methods but executes updates in a **safe manner** using `after()`.
+- **Error Handling**:
+    - Used **message boxes** (`messagebox.showerror()`, `messagebox.showinfo()`) to communicate failures and successes to users.
+    - Ensured that every network call includes **timeout handling** to prevent UI freezes.
+
+---
+
+### **6. Debugging Considerations**
+- **Verbose Logging**:
+    - Included **print statements** when sending and receiving messages.
+    - Logs server responses to make debugging **easier and more transparent**.
+- **Graceful Error Handling**:
+    - Implemented try-except blocks in networking functions to **catch and report errors**.
+    - Used `sys.exit(1)` when failing to connect to the server, ensuring **clean termination**.
+
+---
+
+### **7. Future Improvements**
+1. **Move to Asynchronous I/O (`asyncio`)**
+    - Current threading model works, but moving to **async/await** could simplify event handling.
+2. **Improve Security**
+    - Use **per-user salts** instead of a fixed salt.
+    - Implement **TLS encryption** to protect against man-in-the-middle attacks.
+3. **Optimize Message Storage**
+    - Currently, messages are stored **in-memory** on the server.
+    - Consider **database-backed** storage (e.g., SQLite, PostgreSQL) for better **persistence** and **scalability**.
+
+---
+
+### **Summary**
+✅ **Custom binary serialization** ensures compact, efficient data exchange.  
+✅ **Threading with synchronization mechanisms** prevents race conditions.  
+✅ **Event-based response handling** ensures correct message routing.  
+✅ **UI responsiveness maintained using `after(0, callback)`** in Tkinter.  
+✅ **Security-conscious authentication with hashed passwords** (though per-user salts needed for improvement).  
+
+Overall, the current implementation provides a **functional, scalable, and efficient** chat client, with room for improvements in **security, asynchronous programming, and persistence**. 🚀
