@@ -265,7 +265,7 @@ class WireServer:
         """
         Prepares a payload for immediate message delivery.
         """
-        return self.payload(Operations.RECEIVE_CURRENT_MESSAGE, msg)
+        return self.payload(Operations.RECEIVE_CURRENT_MESSAGE, [msg])
 
     def view_msgs(self, username):
         """
