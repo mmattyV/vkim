@@ -92,6 +92,10 @@ class WireServer:
 
             print('Processing operation...')
             # Dispatch based on the numeric message type.
+            
+            if msg_type == Operations.CHECK_USERNAME.value:
+                response = self.check_username(payload_received[0])  # Assuming payload[0] is the username.
+                self.package_send(response, conn)
             if msg_type_received == Operations.CREATE_ACCOUNT.value:
                 # Assume payload[0] is the username.
                 print('hello 2')
