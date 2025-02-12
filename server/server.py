@@ -5,6 +5,7 @@ import struct
 import threading
 import sys
 import os
+import fnmatch
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "common")))
 
@@ -108,7 +109,8 @@ class WireServer:
                 response = self.logout(payload_received[0])
                 self.package_send(response, conn)
             elif msg_type_received == Operations.LIST_ACCOUNTS.value:
-                response = self.list_accounts()
+                pattern = payload_received[0] if payload_received else ""
+                response = self.list_accounts(pattern)
                 self.package_send(response, conn)
             elif msg_type_received == Operations.SEND_MESSAGE.value:
                 if payload_received[0] == self.DISCONNECT_MESSAGE:
@@ -209,7 +211,9 @@ class WireServer:
             new_user = User(username)
             self.USERS[username] = new_user
             self.ACTIVE_USERS[username] = conn
-        return self.payload(Operations.SUCCESS, [username, "Auth successful"])
+            user_obj = self.USERS[username]
+            unread_count = user_obj.undelivered_messages.qsize()
+        return self.payload(Operations.SUCCESS, [username, "Auth successful", unread_count])
 
     def login(self, username, conn):
         with self.USER_LOCK:
@@ -220,7 +224,7 @@ class WireServer:
                 # Return the username along with a success message and the unread count.
                 return self.payload(
                     Operations.SUCCESS, 
-                    [username, f"Auth successful. Unread messages: {unread_count}"]
+                    [username, "Auth successful", unread_count]
                 )
         return self.payload(Operations.FAILURE, ["Auth unsuccessful"])
 
@@ -231,12 +235,17 @@ class WireServer:
                 return self.payload(Operations.SUCCESS, ["Logout successful"])
         return self.payload(Operations.ACCOUNT_DOES_NOT_EXIST, ["Logout failed"])
     
-    def list_accounts(self):
+    def list_accounts(self, pattern=""):
         with self.USER_LOCK:
-            if len(self.USERS) == 0:
-                return self.payload(Operations.FAILURE, ["No accounts available."])
-            accounts = "\n".join(self.USERS.keys())
-        return self.payload(Operations.SUCCESS, [accounts, "Accounts successfully retrieved"])
+            # If pattern is empty, match all accounts
+            if not pattern:
+                matching_accounts = list(self.USERS.keys())
+            else:
+                matching_accounts = fnmatch.filter(self.USERS.keys(), pattern)
+        if not matching_accounts:
+            return self.payload(Operations.FAILURE, [f"No accounts match pattern '{pattern}'"])
+        accounts_str = "\n".join(matching_accounts)
+        return self.payload(Operations.SUCCESS, [accounts_str, "Accounts successfully retrieved"])
 
     def send_message(self, sender, receiver, msg):
         with self.USER_LOCK:
