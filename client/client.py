@@ -13,7 +13,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "c
 
 from serialization import serialize_custom, deserialize_custom
 from operations import Operations
-from bcrypt_utils import hash_password  # For hashing passwords with bcrypt
+from hash_utils import hash_password  # For hashing passwords with sha256
 
 
 class ChatClient:
@@ -327,7 +327,7 @@ class ChatClient:
             self.current_operation = 'create_account'
         self.create_account_event.clear()
         # Send the CREATE_ACCOUNT request.
-        self.send_message(Operations.CREATE_ACCOUNT, [username, hashed_password.decode('utf-8')])
+        self.send_message(Operations.CREATE_ACCOUNT, [username, hashed_password])
         print("Waiting for account creation response...", flush=True)
         # Wait for the create_account response (with a timeout)
         if self.create_account_event.wait(timeout=10):
@@ -388,7 +388,7 @@ class ChatClient:
         with self.operation_lock:
             self.current_operation = 'login'
         self.login_event.clear()
-        self.send_message(Operations.LOGIN, [username, hashed_password.decode('utf-8')])
+        self.send_message(Operations.LOGIN, [username, hashed_password])
         print("Waiting for login response...", flush=True)
         # Wait for the login response (with a timeout)
         if self.login_event.wait(timeout=10):
