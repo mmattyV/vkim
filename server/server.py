@@ -265,10 +265,10 @@ class WireServer:
                 return self.payload(Operations.FAILURE, ["Receiver does not exist."])
             full_message = f"From {sender}: {msg}"
             # Record the message in the recipient's full history.
-            self.USERS[receiver].all_messages.append(full_message)
             if receiver in self.ACTIVE_USERS:
                 # If the receiver is active, the message is delivered immediately
                 # (handled in handle_client by sending an immediate payload).
+                self.USERS[receiver].add_read_message(full_message)
                 return self.payload(Operations.SUCCESS, ["Message delivered immediately."])
             else:
                 # Otherwise, queue the message for later.
