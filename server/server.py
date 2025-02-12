@@ -227,7 +227,7 @@ class WireServer:
             if len(self.USERS) == 0:
                 return self.payload(Operations.FAILURE, ["No accounts available."])
             accounts = "\n".join(self.USERS.keys())
-        return self.payload(Operations.SUCCESS, accounts)
+        return self.payload(Operations.SUCCESS, [accounts, "Accounts successfully retrieved"])
 
     def send_message(self, sender, receiver, msg):
         with self.USER_LOCK:
@@ -261,7 +261,7 @@ class WireServer:
             if user_obj.undelivered_messages.empty():
                 return self.payload(Operations.FAILURE, ["No undelivered messages."])
             messages = "\n".join(user_obj.get_current_messages())
-        return self.payload(Operations.SUCCESS, messages)
+        return self.payload(Operations.SUCCESS, [messages, "Messages retrieved"])
 
     def delete_message(self, username, delete_info):
         """

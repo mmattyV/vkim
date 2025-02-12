@@ -56,7 +56,7 @@ class TestWireServerBusinessLogic(unittest.TestCase):
     def test_login_failure(self):
         username = "nonexistent"
         result = self.server.login(username, self.dummy_conn)
-        self.assertEqual(result["operation"], Operations.ACCOUNT_DOES_NOT_EXIST)
+        self.assertEqual(result["operation"], Operations.FAILURE)
 
     def test_logout_success(self):
         username = "logoutuser"
@@ -72,49 +72,49 @@ class TestWireServerBusinessLogic(unittest.TestCase):
         result = self.server.logout(username)
         self.assertEqual(result["operation"], Operations.ACCOUNT_DOES_NOT_EXIST)
 
-    # def test_send_message_offline(self):
-    #     sender = "sender"
-    #     receiver = "receiver"
-    #     msg = "Hello offline"
-    #     # Pre-create sender and receiver, but do not mark receiver as active.
-    #     self.server.USERS[sender] = User(sender)
-    #     self.server.USERS[receiver] = User(receiver)
-    #     result = self.server.send_message(sender, receiver, msg)
-    #     self.assertEqual(result["operation"], Operations.SUCCESS)
-    #     # The message should be queued in the receiver's undelivered_messages.
-    #     queued_messages = self.server.USERS[receiver].get_current_messages()
-    #     self.assertIn(f"From {sender}: {msg}", queued_messages)
+    def test_send_message_offline(self):
+        sender = "sender"
+        receiver = "receiver"
+        msg = "Hello offline"
+        # Pre-create sender and receiver, but do not mark receiver as active.
+        self.server.USERS[sender] = User(sender)
+        self.server.USERS[receiver] = User(receiver)
+        result = self.server.send_message(sender, receiver, msg)
+        self.assertEqual(result["operation"], Operations.SUCCESS)
+        # The message should be queued in the receiver's undelivered_messages.
+        queued_messages = self.server.USERS[receiver].get_current_messages()
+        self.assertIn(f"From {sender}: {msg}", queued_messages)
 
-    # def test_send_message_active(self):
-    #     sender = "sender"
-    #     receiver = "receiver"
-    #     msg = "Hello active"
-    #     # Pre-create sender and receiver.
-    #     self.server.USERS[sender] = User(sender)
-    #     self.server.USERS[receiver] = User(receiver)
-    #     # Mark receiver as active by providing a dummy connection.
-    #     dummy_conn_receiver = DummyConnection()
-    #     self.server.ACTIVE_USERS[receiver] = dummy_conn_receiver
-    #     result = self.server.send_message(sender, receiver, msg)
-    #     self.assertEqual(result["operation"], Operations.SUCCESS)
-    #     # For an active receiver, the message should be delivered immediately rather than queued.
-    #     # (This may depend on how your immediate delivery is implemented.)
-    #     self.assertTrue(self.server.USERS[receiver].undelivered_messages.empty())
+    def test_send_message_active(self):
+        sender = "sender"
+        receiver = "receiver"
+        msg = "Hello active"
+        # Pre-create sender and receiver.
+        self.server.USERS[sender] = User(sender)
+        self.server.USERS[receiver] = User(receiver)
+        # Mark receiver as active by providing a dummy connection.
+        dummy_conn_receiver = DummyConnection()
+        self.server.ACTIVE_USERS[receiver] = dummy_conn_receiver
+        result = self.server.send_message(sender, receiver, msg)
+        self.assertEqual(result["operation"], Operations.SUCCESS)
+        # For an active receiver, the message should be delivered immediately rather than queued.
+        # (This may depend on how your immediate delivery is implemented.)
+        self.assertTrue(self.server.USERS[receiver].undelivered_messages.empty())
 
-    # def test_view_msgs_empty(self):
-    #     username = "nomsg"
-    #     self.server.USERS[username] = User(username)
-    #     result = self.server.view_msgs(username)
-    #     self.assertEqual(result["operation"], Operations.FAILURE)
+    def test_view_msgs_empty(self):
+        username = "nomsg"
+        self.server.USERS[username] = User(username)
+        result = self.server.view_msgs(username)
+        self.assertEqual(result["operation"], Operations.FAILURE)
 
-    # def test_view_msgs_success(self):
-    #     username = "hasmsg"
-    #     user = User(username)
-    #     user.queue_message("Test message")
-    #     self.server.USERS[username] = user
-    #     result = self.server.view_msgs(username)
-    #     self.assertEqual(result["operation"], Operations.SUCCESS)
-    #     self.assertIn("Test message", result["info"])
+    def test_view_msgs_success(self):
+        username = "hasmsg"
+        user = User(username)
+        user.queue_message("Test message")
+        self.server.USERS[username] = user
+        result = self.server.view_msgs(username)
+        self.assertEqual(result["operation"], Operations.SUCCESS)
+        self.assertIn("Test message", result["info"])
 
 if __name__ == "__main__":
     import unittest
