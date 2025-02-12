@@ -9,13 +9,15 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "c
 from serialization import serialize_custom, deserialize_custom
 from operations import Operations
 
+
 class ChatClient:
-    def __init__(self, host='localhost', port=12345):
+    def __init__(self, host='localhost', port=5050):
         self.server_host = host
         self.server_port = port
         self.sock = None
         self.receive_thread = None
         self.running = False
+        self.username = None  # Track the logged-in user
 
     def connect(self):
         """Establish a connection to the server."""
@@ -24,7 +26,7 @@ class ChatClient:
             self.sock.connect((self.server_host, self.server_port))
             self.running = True
             print(f"Connected to server at {self.server_host}:{self.server_port}")
-            
+
             # Start a thread to listen for incoming messages
             self.receive_thread = threading.Thread(target=self.receive_messages, daemon=True)
             self.receive_thread.start()
@@ -46,7 +48,7 @@ class ChatClient:
         while self.running:
             try:
                 # First, receive the fixed part of the message (msg_type and payload_length)
-                header = self.sock.recv(8)
+                header = self.recvall(8)
                 if not header:
                     print("Server closed the connection.")
                     self.running = False
@@ -54,12 +56,7 @@ class ChatClient:
 
                 msg_type, payload_length = struct.unpack("!I I", header)
                 # Now receive the payload
-                payload_bytes = b""
-                while len(payload_bytes) < payload_length:
-                    chunk = self.sock.recv(payload_length - len(payload_bytes))
-                    if not chunk:
-                        break
-                    payload_bytes += chunk
+                payload_bytes = self.recvall(payload_length)
 
                 if len(payload_bytes) != payload_length:
                     print("Incomplete payload received.")
@@ -72,11 +69,31 @@ class ChatClient:
                 self.running = False
                 break
 
+    def recvall(self, n):
+        """Helper function to receive n bytes or return None if EOF is hit."""
+        data = b''
+        while len(data) < n:
+            try:
+                packet = self.sock.recv(n - len(data))
+                if not packet:
+                    return data
+                data += packet
+            except:
+                return data
+        return data
+
     def handle_server_response(self, msg_type, payload):
         """Handle and display the server's response."""
         try:
             operation = Operations(msg_type)
-            print(f"Server Response: {operation.name}, Payload: {payload}")
+            if operation == Operations.RECEIVE_CURRENT_MESSAGE:
+                # Display the incoming message
+                print(f"\n[New Message]: {payload[0]}")
+            else:
+                print(f"Server Response: {operation.name}, Payload: {payload}")
+                # Update username upon successful login
+                if operation == Operations.SUCCESS and "Login successful" in payload:
+                    self.username = payload[0]
         except ValueError:
             print(f"Unknown message type received: {msg_type}, Payload: {payload}")
 
@@ -121,30 +138,47 @@ class ChatClient:
         """Handle account creation."""
         username = input("Enter new username: ").strip()
         password = input("Enter password: ").strip()
+        if not username or not password:
+            print("Username and password cannot be empty.")
+            return
         self.send_message(Operations.CREATE_ACCOUNT, [username, password])
 
     def log_in(self):
         """Handle user login."""
         username = input("Enter username: ").strip()
         password = input("Enter password: ").strip()
+        if not username or not password:
+            print("Username and password cannot be empty.")
+            return
         self.send_message(Operations.LOGIN, [username, password])
 
     def send_chat_message(self):
         """Handle sending a chat message."""
+        if not self.username:
+            print("You must be logged in to send messages.")
+            return
         recipient = input("Enter recipient username: ").strip()
         message = input("Enter message: ").strip()
+        if not recipient or not message:
+            print("Recipient and message cannot be empty.")
+            return
         self.send_message(Operations.SEND_MESSAGE, [recipient, message])
 
     def logout(self):
         """Handle user logout."""
-        self.send_message(Operations.LOGOUT, [])
+        if not self.username:
+            print("You are not logged in.")
+            return
+        self.send_message(Operations.LOGOUT, [self.username])
+        self.username = None
+
 
 if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser(description="Chat Client")
     parser.add_argument('--host', type=str, default='localhost', help='Server host')
-    parser.add_argument('--port', type=int, default=12345, help='Server port')
+    parser.add_argument('--port', type=int, default=5050, help='Server port')
     args = parser.parse_args()
 
     client = ChatClient(host=args.host, port=args.port)
