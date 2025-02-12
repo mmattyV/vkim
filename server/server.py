@@ -258,6 +258,8 @@ class WireServer:
             if receiver not in self.USERS:
                 return self.payload(Operations.FAILURE, ["Receiver does not exist."])
             full_message = f"From {sender}: {msg}"
+            # Record the message in the recipient's full history.
+            self.USERS[receiver].all_messages.append(full_message)
             if receiver in self.ACTIVE_USERS:
                 # If the receiver is active, the message is delivered immediately
                 # (handled in handle_client by sending an immediate payload).
@@ -303,32 +305,20 @@ class WireServer:
 
     def delete_message(self, username, delete_info):
         """
-        Deletes messages from a user's undelivered messages.
-        If delete_info is "ALL", clears the entire queue.
-        Otherwise, if delete_info is a numeric string, deletes that many messages.
+        Deletes messages from a user's message history (both delivered and undelivered).
+        
+        If delete_info is "ALL", clears the entire message history.
+        Otherwise, if delete_info is a numeric string, deletes that many messages from the beginning.
         """
         with self.USER_LOCK:
             if username not in self.USERS:
                 return self.payload(Operations.FAILURE, ["User does not exist."])
             user_obj = self.USERS[username]
-            if delete_info.upper() == "ALL":
-                count = 0
-                while not user_obj.undelivered_messages.empty():
-                    user_obj.undelivered_messages.get()
-                    count += 1
-                return self.payload(Operations.SUCCESS, [f"Deleted all messages ({count})."])
-            else:
-                try:
-                    num = int(delete_info)
-                except ValueError:
-                    return self.payload(Operations.FAILURE, ["Invalid deletion count."])
-                count = 0
-                for _ in range(num):
-                    if user_obj.undelivered_messages.empty():
-                        break
-                    user_obj.undelivered_messages.get()
-                    count += 1
-                return self.payload(Operations.SUCCESS, [f"Deleted {count} messages."])
+            deleted_count = user_obj.delete_messages(delete_info)
+            if deleted_count == 0:
+                return self.payload(Operations.FAILURE, ["No messages deleted."])
+            return self.payload(Operations.SUCCESS, [f"Deleted {deleted_count} messages."])
+
 
 if __name__ == "__main__":
     ws = WireServer()
