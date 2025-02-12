@@ -69,7 +69,7 @@ class WireServer:
 
             try:
                 # Unpack the header into message type and payload length
-                msg_type, payload_length = struct.unpack("!I I", header)
+                _, payload_length = struct.unpack("!I I", header)
             except struct.error:
                 print("Invalid header received. Disconnecting client.")
                 connected = False
@@ -93,7 +93,7 @@ class WireServer:
             print('Processing operation...')
             # Dispatch based on the numeric message type.
             
-            if msg_type == Operations.CHECK_USERNAME.value:
+            if msg_type_received == Operations.CHECK_USERNAME.value:
                 response = self.check_username(payload_received[0])  # Assuming payload[0] is the username.
                 self.package_send(response, conn)
             if msg_type_received == Operations.CREATE_ACCOUNT.value:
@@ -140,7 +140,7 @@ class WireServer:
         """
         # For example, assume 'data' is already in the form: (operation, [list of response strings])
         print("data is:", data)
-        response_bytes = serialize_custom(data['operation'], [data['info']])
+        response_bytes = serialize_custom(data['operation'], data['info'])
         conn.send(response_bytes)
 
     def start_server(self):
@@ -171,15 +171,15 @@ class WireServer:
         with self.USER_LOCK:
             if username in self.USERS:
                 # The account already exists; prompt the client for a password (login).
-                return self.payload(Operations.ACCOUNT_ALREADY_EXISTS, "")
+                return self.payload(Operations.ACCOUNT_ALREADY_EXISTS, [""])
             else:
                 # The account does not exist; prompt the client to create a new account by supplying a password.
-                return self.payload(Operations.ACCOUNT_DOES_NOT_EXIST, "")
+                return self.payload(Operations.ACCOUNT_DOES_NOT_EXIST, [""])
             
     def create_account(self, username, conn):
         with self.USER_LOCK:
             if username in self.USERS:
-                return self.payload(Operations.ACCOUNT_ALREADY_EXISTS, "")
+                return self.payload(Operations.ACCOUNT_ALREADY_EXISTS, [""])
             new_user = User(username)
             self.USERS[username] = new_user
             self.ACTIVE_USERS[username] = conn
@@ -190,14 +190,14 @@ class WireServer:
             if username in self.USERS:
                 self.ACTIVE_USERS[username] = conn
                 return self.payload(Operations.SUCCESS, [username, "Auth successful"])
-        return self.payload(Operations.ACCOUNT_DOES_NOT_EXIST, "")
+        return self.payload(Operations.ACCOUNT_DOES_NOT_EXIST, [""])
 
     def logout(self, username):
         with self.USER_LOCK:
             if username in self.ACTIVE_USERS:
                 del self.ACTIVE_USERS[username]
-                return self.payload(Operations.SUCCESS, "")
-        return self.payload(Operations.ACCOUNT_DOES_NOT_EXIST, "")
+                return self.payload(Operations.SUCCESS, [""])
+        return self.payload(Operations.ACCOUNT_DOES_NOT_EXIST, [""])
 
 
 if __name__ == "__main__":
