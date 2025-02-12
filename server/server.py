@@ -139,7 +139,6 @@ class WireServer:
 
             elif msg_type_received == Operations.VIEW_UNDELIVERED_MESSAGES.value:
                 # Expect the payload to include the username and the count of messages requested.
-                # For example, payload_received might be: [username, "5"]
                 username = payload_received[0]
                 try:
                     count = int(payload_received[1])
@@ -285,7 +284,7 @@ class WireServer:
     def view_msgs(self, username, count):
         """
         Retrieves up to 'count' undelivered messages for the given username.
-        Once retrieved, these messages are removed from the user's undelivered messages queue.
+        As messages are delivered, they are removed from the undelivered queue and added to the read_messages list.
         Returns a payload with the messages as a newline-separated string.
         """
         with self.USER_LOCK:
@@ -294,12 +293,13 @@ class WireServer:
             user_obj = self.USERS[username]
             if user_obj.undelivered_messages.empty():
                 return self.payload(Operations.FAILURE, ["No undelivered messages."])
-            
-            messages = []
-            for _ in range(count):
-                if user_obj.undelivered_messages.empty():
-                    break
-                messages.append(user_obj.undelivered_messages.get())
+            messages_list = user_obj.get_current_messages(count)
+        if messages_list:
+            messages_str = "\n".join(messages_list)
+            return self.payload(Operations.SUCCESS, [messages_str, f"{len(messages_list)} messages delivered."])
+        else:
+            return self.payload(Operations.FAILURE, ["No undelivered messages."])
+
         
         if messages:
             joined_messages = "\n".join(messages)
@@ -323,16 +323,15 @@ class WireServer:
 
     def delete_message(self, username, delete_info):
         """
-        Deletes messages from a user's message history (both delivered and undelivered).
-        
-        If delete_info is "ALL", clears the entire message history.
+        Deletes messages from a user's read messages.
+        If delete_info is "ALL", clears the entire read_messages list.
         Otherwise, if delete_info is a numeric string, deletes that many messages from the beginning.
         """
         with self.USER_LOCK:
             if username not in self.USERS:
                 return self.payload(Operations.FAILURE, ["User does not exist."])
             user_obj = self.USERS[username]
-            deleted_count = user_obj.delete_messages(delete_info)
+            deleted_count = user_obj.delete_read_messages(delete_info)
             if deleted_count == 0:
                 return self.payload(Operations.FAILURE, ["No messages deleted."])
             return self.payload(Operations.SUCCESS, [f"Deleted {deleted_count} messages."])
