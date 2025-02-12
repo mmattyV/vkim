@@ -183,7 +183,7 @@ class WireServer:
             new_user = User(username)
             self.USERS[username] = new_user
             self.ACTIVE_USERS[username] = conn
-        return self.payload(Operations.SUCCESS, "Auth successful")
+        return self.payload(Operations.SUCCESS, [username, "Auth successful"])
 
     def login(self, username, conn):
         with self.USER_LOCK:
