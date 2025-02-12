@@ -15,6 +15,7 @@ from serialization import serialize_custom, deserialize_custom
 from operations import Operations
 from bcrypt_utils import hash_password  # For hashing passwords with bcrypt
 
+
 class ChatClient:
     def __init__(self, host='localhost', port=5050):
         self.server_host = host
@@ -23,10 +24,34 @@ class ChatClient:
         self.receive_thread = None
         self.running = False
         self.username = None  # Track the logged-in user
+        self.number_unread_messages = 0  # Track the number of unread messages
 
-        # Event and variable to handle responses to CHECK_USERNAME requests
+        # Events to handle server responses
         self.check_username_event = threading.Event()
         self.account_exists_response = None  # Will be set to an Operations value
+
+        self.login_event = threading.Event()
+        self.login_response = None  # Will be set to Operations.SUCCESS or Operations.FAILURE
+
+        self.logout_event = threading.Event()
+        self.logout_response = None  # Will be set to Operations.SUCCESS or Operations.FAILURE
+
+        self.create_account_event = threading.Event()
+        self.create_account_response = None  # Will be set to Operations.SUCCESS or Operations.FAILURE
+
+        # Event and Response for LIST_ACCOUNTS
+        self.list_accounts_event = threading.Event()
+        self.list_accounts_response = None  # Will store the server's response
+
+        # Event and Response for SEND_MESSAGE
+        self.send_message_event = threading.Event()
+        self.send_message_response = None  # Will store the server's response
+
+        # Track the current operation awaiting a response
+        self.current_operation = None
+
+        # Lock to synchronize access to current_operation
+        self.operation_lock = threading.Lock()
 
     def connect(self):
         """Establish a connection to the server."""
@@ -100,17 +125,120 @@ class ChatClient:
         try:
             operation = Operations(msg_type)
             if operation == Operations.RECEIVE_CURRENT_MESSAGE:
-                # Display the incoming message.
+                # Display the incoming message immediately
                 print(f"\n[New Message]: {payload[0]}")
-            else:
-                print(f"Server Response: {operation.name}, Payload: {payload}\n")
-                # If the response is for a username check, signal the waiting thread.
+                return  # Return early to avoid processing it as part of current_operation
+
+            # For all other operations, proceed as before
+            print(f"Server Response: {operation.name}, Payload: {payload}\n")
+
+            with self.operation_lock:
+                current_op = self.current_operation
+
+            if current_op is None:
+                print("No operation is currently awaiting a response.")
+                return
+
+            if current_op == 'check_username':
                 if operation in (Operations.ACCOUNT_DOES_NOT_EXIST, Operations.ACCOUNT_ALREADY_EXISTS):
                     self.account_exists_response = operation
                     self.check_username_event.set()
-                elif operation == Operations.SUCCESS and "Auth successful" in payload:
-                    self.username = payload[0]
+                else:
+                    print("Unexpected response for CHECK_USERNAME operation.")
+                    self.check_username_event.set()  # Unblock to prevent hanging
+
+            elif current_op == 'create_account':
+                if operation == Operations.SUCCESS:
+                    # Assuming the server sends the username and number of unread messages
+                    # For example: [username, "Account created successfully.", "0"]
+                    if len(payload) >= 3:
+                        self.username = payload[0]
+                        try:
+                            self.number_unread_messages = int(payload[2])
+                        except ValueError:
+                            self.number_unread_messages = 0
+                    print("Account created successfully. You are now logged in as:", self.username)
+                    print("Number of unread messages:", self.number_unread_messages)
+                    self.create_account_response = Operations.SUCCESS
+                    self.create_account_event.set()
+                elif operation == Operations.FAILURE:
+                    print("Account creation failed. Please try again.")
+                    self.create_account_response = Operations.FAILURE
+                    self.create_account_event.set()
+                else:
+                    print("Unexpected response for CREATE_ACCOUNT operation.")
+                    self.create_account_event.set()  # Unblock to prevent hanging
+
+            elif current_op == 'login':
+                if operation == Operations.SUCCESS:
+                    # Assuming the server sends the username and number of unread messages
+                    # For example: [username, "Auth successful", "2"]
+                    if len(payload) >= 3:
+                        self.username = payload[0]
+                        try:
+                            self.number_unread_messages = int(payload[2])
+                        except ValueError:
+                            self.number_unread_messages = 0
                     print("Logged in as:", self.username)
+                    print("Number of unread messages:", self.number_unread_messages)
+                    self.login_response = Operations.SUCCESS
+                    self.login_event.set()
+                elif operation == Operations.FAILURE:
+                    print("Authentication failed. Please try again.")
+                    self.login_response = Operations.FAILURE
+                    self.login_event.set()
+                else:
+                    print("Unexpected response for LOGIN operation.")
+                    self.login_event.set()  # Unblock to prevent hanging
+
+            elif current_op == 'logout':
+                if operation == Operations.SUCCESS:
+                    print("Successfully logged out.")
+                    self.logout_response = Operations.SUCCESS
+                    self.logout_event.set()
+                    self.username = None
+                    self.number_unread_messages = 0
+                elif operation == Operations.FAILURE:
+                    print("Logout failed. Please try again.")
+                    self.logout_response = Operations.FAILURE
+                    self.logout_event.set()
+                else:
+                    print("Unexpected response for LOGOUT operation.")
+                    self.logout_event.set()  # Unblock to prevent hanging
+
+            elif current_op == 'list_accounts':
+                if operation == Operations.SUCCESS:
+                    accounts = payload[0]  # Assuming the first payload element is the accounts string
+                    print("Accounts:\n" + accounts)
+                    self.list_accounts_response = Operations.SUCCESS
+                    self.list_accounts_event.set()
+                elif operation == Operations.FAILURE:
+                    error_message = payload[0] if payload else "Failed to retrieve accounts."
+                    print(f"Failed to list accounts: {error_message}")
+                    self.list_accounts_response = Operations.FAILURE
+                    self.list_accounts_event.set()
+                else:
+                    print("Unexpected response for LIST_ACCOUNTS operation.")
+                    self.list_accounts_event.set()  # Unblock to prevent hanging
+
+            elif current_op == 'send_message':
+                if operation == Operations.SUCCESS:
+                    success_message = payload[0] if payload else "Message sent successfully."
+                    print(success_message)
+                    self.send_message_response = Operations.SUCCESS
+                    self.send_message_event.set()
+                elif operation == Operations.FAILURE:
+                    error_message = payload[0] if payload else "Failed to send message."
+                    print(f"Failed to send message: {error_message}")
+                    self.send_message_response = Operations.FAILURE
+                    self.send_message_event.set()
+                else:
+                    print("Unexpected response for SEND_MESSAGE operation.")
+                    self.send_message_event.set()  # Unblock to prevent hanging
+
+            # Handle other operations similarly if needed
+            else:
+                print(f"Unhandled current operation: {current_op}")
         except ValueError:
             print(f"Unknown message type received: {msg_type}, Payload: {payload}")
 
@@ -123,15 +251,38 @@ class ChatClient:
             return
         # Hash the password using bcrypt.
         hashed_password = hash_password(password)
+        # Prepare to wait for create_account response
+        with self.operation_lock:
+            self.current_operation = 'create_account'
+        self.create_account_event.clear()
         # Send the CREATE_ACCOUNT request.
         self.send_message(Operations.CREATE_ACCOUNT, [username, hashed_password.decode('utf-8')])
-    
+        print("Waiting for account creation response...", flush=True)
+        # Wait for the create_account response (with a timeout)
+        if self.create_account_event.wait(timeout=10):
+            if self.create_account_response == Operations.SUCCESS:
+                # Account created successfully
+                pass  # Already handled in handle_server_response
+            elif self.create_account_response == Operations.FAILURE:
+                # Account creation failed
+                pass  # Already handled in handle_server_response
+            else:
+                print("Unexpected account creation response.")
+        else:
+            print("No response from server. Please try again later.")
+        # Reset current_operation
+        with self.operation_lock:
+            self.current_operation = None
+
     def try_create_account(self):
         """Check whether a username exists and then prompt for account creation if it doesn't."""
         username = input("Enter username (to see if it exists): ").strip()
         if not username:
             print("Username cannot be empty.")
             return
+        # Prepare to wait for check_username response
+        with self.operation_lock:
+            self.current_operation = 'check_username'
         # Send the CHECK_USERNAME request.
         self.send_message(Operations.CHECK_USERNAME, [username])
         # Clear the event and wait for the server's response.
@@ -150,6 +301,9 @@ class ChatClient:
                 print("Unexpected response received.")
         else:
             print("No response from server. Please try again later.")
+        # Reset current_operation
+        with self.operation_lock:
+            self.current_operation = None
 
     def log_in(self):
         """Handle user login."""
@@ -159,7 +313,65 @@ class ChatClient:
             print("Username and password cannot be empty.")
             return
         hashed_password = hash_password(password)
+        # Prepare to wait for login response
+        with self.operation_lock:
+            self.current_operation = 'login'
+        self.login_event.clear()
         self.send_message(Operations.LOGIN, [username, hashed_password.decode('utf-8')])
+        print("Waiting for login response...", flush=True)
+        # Wait for the login response (with a timeout)
+        if self.login_event.wait(timeout=10):
+            if self.login_response == Operations.SUCCESS:
+                # Logged in successfully
+                pass  # Already handled in handle_server_response
+            elif self.login_response == Operations.FAILURE:
+                # Failed to log in
+                pass  # Already handled in handle_server_response
+            else:
+                print("Unexpected login response.")
+        else:
+            print("No response from server. Please try again later.")
+        # Reset current_operation
+        with self.operation_lock:
+            self.current_operation = None
+
+    def list_accounts(self):
+        """Handle listing of accounts."""
+        if not self.username:
+            print("You must be logged in to list accounts.")
+            return
+        pattern = input("Enter a username pattern to search for: ").strip()
+        if not pattern:
+            pattern = "*"
+
+        # Set current operation
+        with self.operation_lock:
+            self.current_operation = 'list_accounts'
+
+        # Clear the event and reset the response
+        self.list_accounts_event.clear()
+        self.list_accounts_response = None
+
+        # Send the LIST_ACCOUNTS request
+        self.send_message(Operations.LIST_ACCOUNTS, [self.username, pattern])
+        print("Waiting for list accounts response...", flush=True)
+
+        # Wait for the server's response (with a timeout)
+        if self.list_accounts_event.wait(timeout=10):
+            if self.list_accounts_response == Operations.SUCCESS:
+                # The accounts have already been printed in handle_server_response
+                pass
+            elif self.list_accounts_response == Operations.FAILURE:
+                # The error message has already been printed in handle_server_response
+                pass
+            else:
+                print("Unexpected list accounts response.")
+        else:
+            print("No response from server. Please try again later.")
+
+        # Reset current_operation
+        with self.operation_lock:
+            self.current_operation = None
 
     def send_chat_message(self):
         """Handle sending a chat message."""
@@ -171,15 +383,65 @@ class ChatClient:
         if not recipient or not message:
             print("Recipient and message cannot be empty.")
             return
-        self.send_message(Operations.SEND_MESSAGE, [recipient, message])
+
+        # Prepare payload as a single string separated by newlines
+        payload = "\n".join([self.username, recipient, message])
+
+        # Set current operation
+        with self.operation_lock:
+            self.current_operation = 'send_message'
+
+        # Clear the event and reset the response
+        self.send_message_event.clear()
+        self.send_message_response = None
+
+        # Send the SEND_MESSAGE request
+        self.send_message(Operations.SEND_MESSAGE, [payload])
+        print("Waiting for send message response...", flush=True)
+
+        # Wait for the server's response (with a timeout)
+        if self.send_message_event.wait(timeout=10):
+            if self.send_message_response == Operations.SUCCESS:
+                # Success message already printed in handle_server_response
+                pass
+            elif self.send_message_response == Operations.FAILURE:
+                # Failure message already printed in handle_server_response
+                pass
+            else:
+                print("Unexpected send message response.")
+        else:
+            print("No response from server. Please try again later.")
+
+        # Reset current_operation
+        with self.operation_lock:
+            self.current_operation = None
 
     def logout(self):
         """Handle user logout."""
         if not self.username:
             print("You are not logged in.")
             return
+        # Prepare to wait for logout response
+        with self.operation_lock:
+            self.current_operation = 'logout'
+        self.logout_event.clear()
         self.send_message(Operations.LOGOUT, [self.username])
-        self.username = None
+        print("Waiting for logout response...", flush=True)
+        # Wait for the logout response (with a timeout)
+        if self.logout_event.wait(timeout=10):
+            if self.logout_response == Operations.SUCCESS:
+                # Already handled in handle_server_response
+                pass
+            elif self.logout_response == Operations.FAILURE:
+                # Already handled in handle_server_response
+                pass
+            else:
+                print("Unexpected logout response.")
+        else:
+            print("No response from server. Please try again later.")
+        # Reset current_operation
+        with self.operation_lock:
+            self.current_operation = None
 
     def close(self):
         """Close the connection to the server."""
@@ -193,33 +455,50 @@ class ChatClient:
         self.connect()
         try:
             while self.running:
-                # Print the main menu.
                 print("\nChoose an operation:")
-                print("1. Create Account")
-                print("2. Log In")
-                print("3. Send Message")
-                print("4. Logout")
-                print("5. Exit")
-                # Flush to ensure the prompt is printed immediately.
+                if self.username is None:
+                    # Not logged in: show full menu (create account, log in, exit)
+                    print("1. Create Account")
+                    print("2. Log In")
+                    print("3. Exit")
+                else:
+                    # Logged in: show limited options (list accounts, send message, logout, exit)
+                    print("1. List Accounts")
+                    print("2. Send Message")
+                    print("3. Logout")
+                    print("4. Exit")
                 sys.stdout.flush()
+
                 choice = input("Enter choice number: ").strip()
 
-                if choice == '1':
-                    self.try_create_account()
-                elif choice == '2':
-                    self.log_in()
-                elif choice == '3':
-                    self.send_chat_message()
-                elif choice == '4':
-                    self.logout()
-                elif choice == '5':
-                    self.close()
-                    break
+                if self.username is None:
+                    # Handle choices for when not logged in
+                    if choice == '1':
+                        self.try_create_account()
+                    elif choice == '2':
+                        self.log_in()
+                    elif choice == '3':
+                        self.close()
+                        break
+                    else:
+                        print("Invalid choice. Please try again.")
                 else:
-                    print("Invalid choice. Please try again.")
+                    # Handle choices for when logged in
+                    if choice == '1':
+                        self.list_accounts()
+                    elif choice == '2':
+                        self.send_chat_message()
+                    elif choice == '3':
+                        self.logout()
+                    elif choice == '4':
+                        self.close()
+                        break
+                    else:
+                        print("Invalid choice. Please try again.")
         except KeyboardInterrupt:
             print("\nInterrupted by user.")
             self.close()
+
 
 if __name__ == "__main__":
     # Set up connection parameters.
