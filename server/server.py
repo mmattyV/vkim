@@ -109,7 +109,7 @@ class WireServer:
                 response = self.logout(payload_received[0])
                 self.package_send(response, conn)
             elif msg_type_received == Operations.LIST_ACCOUNTS.value:
-                pattern = payload_received[0] if payload_received else ""
+                pattern = payload_received[1] if payload_received else ""
                 response = self.list_accounts(pattern)
                 self.package_send(response, conn)
             elif msg_type_received == Operations.SEND_MESSAGE.value:
