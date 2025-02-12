@@ -16,7 +16,28 @@ from serialization import deserialize_custom, serialize_custom
 
 class WireServer:
     """
-    Initializes the server object with necessary configurations.
+    A multi-threaded chat server that handles multiple client connections and manages user accounts.
+
+    This server implements a custom wire protocol for client-server communication,
+    managing user accounts, message delivery, and connection states. It supports
+    multiple concurrent client connections using thread-per-client architecture.
+
+    Attributes:
+        PORT (int): Port number the server listens on (default: 5050)
+        SERVER_HOST_NAME (str): Machine's hostname
+        SERVER_HOST (str): Machine's IPv4 address
+        HEADER (int): Fixed header length in bytes for message length (8 bytes)
+        FORMAT (str): String encoding format (UTF-8)
+        DISCONNECT_MESSAGE (str): Special message to indicate client disconnect
+        ADDR (tuple): Tuple of (host, port) for socket binding
+        USER_LOCK (threading.Lock): Thread-safe lock for user data access
+        USERS (dict): Dictionary mapping usernames to User objects
+        ACTIVE_USERS (dict): Dictionary mapping usernames to active socket connections
+        server (socket.socket): Main server socket for accepting connections
+
+    Thread Safety:
+        All methods that access shared user data are protected by USER_LOCK
+        to ensure thread-safe operation in multi-client scenarios.
     """
     # Configuration Constants
     PORT = 5050  # Port to listen on
@@ -36,10 +57,21 @@ class WireServer:
     server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     server.bind(ADDR)
 
-
-
     def recvall(self, conn, n):
-        """Helper function to receive n bytes or return None if EOF is hit."""
+        """
+        Helper function to receive n bytes or return None if EOF is hit.
+        
+        Args:
+            conn (socket.socket): The socket connection to receive from
+            n (int): Number of bytes to receive
+
+        Returns:
+            bytes: The received data, may be less than n bytes if connection closed/errored
+
+        Note:
+            This method handles partial receives and connection errors gracefully,
+            returning whatever data was successfully received.
+        """
         data = b''
         while len(data) < n:
             try:
@@ -53,12 +85,24 @@ class WireServer:
 
     def handle_client(self, conn, addr):
         """
-        Handles an incoming client connection by reading a fixed-length header, then reading the message
-        and using our custom deserialization format.
+        Handle an individual client connection in a dedicated thread.
+        Manages the client connection lifecycle, including message reception,
+        deserialization, and dispatching to appropriate handlers. Maintains
+        connection state and handles disconnection cleanup.
+
+        Args:
+            conn (socket.socket): Socket connection to the client
+            addr (tuple): Client address tuple (host, port)
+
+        Thread Safety:
+            This method runs in its own thread and uses USER_LOCK when
+            accessing shared user data.
+
+        Note:
+            Automatically removes client from ACTIVE_USERS on disconnection
         """
         print(f"[NEW CONNECTION] {addr} connected.")
         connected = True
-        current_username = None  # Track the username associated with this connection
         while connected:
             # Read the header to know the message type and payload length.
             header = self.recvall(conn, self.HEADER)
@@ -156,27 +200,27 @@ class WireServer:
         
     def payload(self, operation, info):
         """
-        Create a response payload as a dictionary.
-        'operation' should be an Operations enum member,
-        and 'info' should be a string (or empty string if not applicable).
+        Create a standardized response payload dictionary.
+
+        Args:
+            operation (Operations): The operation type for the response
+            info (list): List of strings containing response information
+
+        Returns:
+            dict: Dictionary with 'operation' and 'info' keys
         """
         return {"operation": operation, "info": info}
 
-    def calculate_send_length(self, serialized_data):
-        """
-        Calculates and returns a fixed-length bytes object representing the length of the serialized data.
-        """
-        message_length = len(serialized_data)
-        send_length = str(message_length).encode(self.FORMAT)
-        send_length += b" " * (self.HEADER - len(send_length))
-        return send_length
-
     def package_send(self, data, conn):
         """
-        Serializes the payload using the custom format and sends it with a fixed-length header.
-        'data' here is expected to be a tuple or a list that can be passed to serialize_custom.
-        For example, if 'data' is a payload for a response, call:
-            serialize_custom(response_operation, response_payload_list)
+        Serialize and send a response to a client. Handles the serialization 
+        of response data into the wire protocol format and sends it through 
+        the provided socket connection. Uses the custom serialization format 
+        defined in serialization.py
+
+        Args:
+            data (dict): Response data containing 'operation' and 'info'
+            conn (socket.socket): Socket connection to send through
         """
         # For example, assume 'data' is already in the form: (operation, [list of response strings])
         print("data is:", data)
@@ -185,8 +229,13 @@ class WireServer:
 
     def start_server(self):
         """
-        Starts the server and listens for incoming connections.
-        For every new connection, a new thread is created to handle it.
+        Start the server and begin accepting client connections.
+
+        Creates a new thread for each client connection accepted.
+        Continues running indefinitely until interrupted.
+
+        Note:
+            Prints status messages about server startup and active connections
         """
         print(f"[STARTING] Server is starting at {self.SERVER_HOST} on port {self.PORT}...")
         self.server.listen()
@@ -205,8 +254,13 @@ class WireServer:
         the client can prompt the user to log in. Otherwise, returns a payload indicating that the
         username is available for account creation, so the client should prompt the user to supply a password.
         
+        Args:
+            username (str): Username to check
+
         Returns:
-            dict: A payload with an operation code and an info message.
+            dict: Response payload containing:
+                - Operations.ACCOUNT_ALREADY_EXISTS if username exists
+                - Operations.ACCOUNT_DOES_NOT_EXIST if username is available
         """
         with self.USER_LOCK:
             if username in self.USERS:
@@ -217,6 +271,24 @@ class WireServer:
                 return self.payload(Operations.ACCOUNT_DOES_NOT_EXIST, [""])
             
     def create_account(self, username, hashed_password, conn):
+        """
+        Create a new user account.
+        Creates a new User object and associates it with the provided connection.
+        The password should already be hashed when received.
+
+        Args:
+            username (str): Username for the new account
+            hashed_password (str): Pre-hashed password
+            conn (socket.socket): Client's socket connection
+
+        Returns:
+            dict: Response payload containing:
+                - Operations.SUCCESS with user info if created
+                - Operations.ACCOUNT_ALREADY_EXISTS if username taken
+
+        Thread Safety:
+            Protected by USER_LOCK
+        """
         with self.USER_LOCK:
             if username in self.USERS:
                 return self.payload(Operations.ACCOUNT_ALREADY_EXISTS, [""])
@@ -228,6 +300,25 @@ class WireServer:
         return self.payload(Operations.SUCCESS, [username, "Auth successful", f"{unread_count}"])
 
     def login(self, username, hashed_password, conn):
+        """
+        Authenticate a user and establish their session.
+
+        Verifies credentials and marks the user as active if successful.
+        Updates the active connections mapping.
+
+        Args:
+            username (str): Username attempting to log in
+            hashed_password (str): Pre-hashed password to verify
+            conn (socket.socket): Client's socket connection
+
+        Returns:
+            dict: Response payload containing:
+                - Operations.SUCCESS with user info if authenticated
+                - Operations.FAILURE if authentication fails
+
+        Thread Safety:
+            Protected by USER_LOCK
+        """
         with self.USER_LOCK:
             if username in self.USERS:
                 user_obj = self.USERS[username]
@@ -260,6 +351,27 @@ class WireServer:
         return self.payload(Operations.SUCCESS, [accounts_str, "Accounts successfully retrieved"])
 
     def send_message(self, sender, receiver, msg):
+        """
+        Send a message from one user to another.
+
+        Handles both immediate delivery (if receiver is active) and
+        message queuing (if receiver is offline).
+
+        Args:
+            sender (str): Username of the sending user
+            receiver (str): Username of the receiving user
+            msg (str): The message content
+
+        Returns:
+            dict: Response payload indicating delivery status
+
+        Thread Safety:
+            Protected by USER_LOCK
+
+        Note:
+            Messages to active users are delivered immediately via
+            deliver_msgs_immediately()
+        """
         with self.USER_LOCK:
             if receiver not in self.USERS:
                 return self.payload(Operations.FAILURE, ["Receiver does not exist."])
@@ -283,9 +395,22 @@ class WireServer:
 
     def view_msgs(self, username, count):
         """
-        Retrieves up to 'count' undelivered messages for the given username.
-        As messages are delivered, they are removed from the undelivered queue and added to the read_messages list.
-        Returns a payload with the messages as a newline-separated string.
+        Retrieve undelivered messages for a user.
+
+        Fetches and marks as delivered up to 'count' messages from
+        the user's undelivered message queue.
+
+        Args:
+            username (str): Username requesting messages
+            count (int): Maximum number of messages to retrieve
+
+        Returns:
+            dict: Response payload containing:
+                - Operations.SUCCESS with messages if any found
+                - Operations.FAILURE if no messages or user doesn't exist
+
+        Thread Safety:
+            Protected by USER_LOCK
         """
         with self.USER_LOCK:
             if username not in self.USERS:

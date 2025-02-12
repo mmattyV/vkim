@@ -17,6 +17,20 @@ from hash_utils import hash_password  # For hashing passwords with sha256
 
 
 class ChatClient:
+    """
+    Chat client that handles server communication and message management.
+
+    Manages connections, user authentication, message sending/receiving, and
+    synchronizes server responses using threading events.
+
+    Attributes:
+        server_host (str): Server hostname
+        server_port (int): Server port number
+        username (str): Currently logged-in username, None if not logged in
+        number_unread_messages (int): Count of unread messages
+        running (bool): Flag indicating if client is active
+        current_operation (str): Current pending operation awaiting server response
+    """
     def __init__(self, host='localhost', port=5050):
         self.server_host = host
         self.server_port = port
@@ -66,7 +80,12 @@ class ChatClient:
         self.operation_lock = threading.Lock()
 
     def connect(self):
-        """Establish a connection to the server."""
+        """
+        Connect to chat server and start message receiving thread.
+        
+        Raises:
+            SystemExit: If connection fails
+        """
         try:
             self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             self.sock.connect((self.server_host, self.server_port))
@@ -81,7 +100,13 @@ class ChatClient:
             sys.exit(1)
 
     def send_message(self, message_type: Operations, payload: list):
-        """Serialize and send a message to the server."""
+        """
+        Send a message to the server using the custom protocol.
+
+        Args:
+            message_type: Operation type from Operations enum
+            payload: List of strings for the message payload
+        """
         try:
             serialized = serialize_custom(message_type, payload)
             self.sock.sendall(serialized)
@@ -103,7 +128,11 @@ class ChatClient:
         return data
 
     def receive_messages(self):
-        """Continuously listen for messages from the server."""
+        """"
+        Continuously listen for server messages in a separate thread.
+        
+        Handles message reception, deserialization, and dispatches to appropriate handlers.
+        """
         while self.running:
             try:
                 # First, receive the fixed part of the message (msg_type and payload_length)
@@ -133,7 +162,16 @@ class ChatClient:
                 break
 
     def handle_server_response(self, msg_type, payload):
-        """Handle and display the server's response."""
+        """
+        Process server responses and update client state.
+
+        Updates client state based on response type and sets appropriate events
+        to unblock waiting operations.
+
+        Args:
+            msg_type: Operation type from server
+            payload: Response data from server
+        """
         try:
             operation = Operations(msg_type)
             if operation == Operations.RECEIVE_CURRENT_MESSAGE:
@@ -346,7 +384,12 @@ class ChatClient:
             self.current_operation = None
 
     def try_create_account(self):
-        """Check whether a username exists and then prompt for account creation if it doesn't."""
+        """
+        Start account creation process by checking username availability.
+        
+        Prompts for username, checks availability, and if available, proceeds
+        to password collection and account creation.
+        """
         username = input("Enter username (to see if it exists): ").strip()
         if not username:
             print("Username cannot be empty.")
@@ -377,7 +420,12 @@ class ChatClient:
             self.current_operation = None
 
     def log_in(self):
-        """Handle user login."""
+        """
+        Handle user login process.
+        
+        Prompts for credentials, sends login request, and updates client state
+        based on server response.
+        """
         username = input("Enter username: ").strip()
         password = input("Enter password: ").strip()
         if not username or not password:
@@ -445,7 +493,12 @@ class ChatClient:
             self.current_operation = None
 
     def send_chat_message(self):
-        """Handle sending a chat message."""
+        """
+        Send a chat message to another user.
+        
+        Prompts for recipient and message content. Requires user to be logged in.
+        """
+
         if not self.username:
             print("You must be logged in to send messages.")
             return
@@ -488,7 +541,12 @@ class ChatClient:
             self.current_operation = None
 
     def view_messages(self):
-        """Handle viewing undelivered messages."""
+        """
+        Retrieve and display undelivered messages.
+        
+        Prompts for number of messages to retrieve. Updates unread message count
+        based on server response.
+        """
         if not self.username:
             print("You must be logged in to view messages.")
             return
@@ -536,7 +594,11 @@ class ChatClient:
             self.current_operation = None
 
     def delete_messages(self):
-        """Handle deleting undelivered messages."""
+        """
+        Delete read messages.
+        
+        Accepts 'ALL' or a number specifying how many messages to delete from the beginning.
+        """
         if not self.username:
             print("You must be logged in to delete messages.")
             return
@@ -585,7 +647,12 @@ class ChatClient:
             self.current_operation = None
 
     def delete_account(self):
-        """Handle deleting the logged-in user's account."""
+        """
+        Delete the current user's account.
+        
+        Requires confirmation and handles cleanup of user state on success.
+        Account cannot be deleted if there are unread messages.
+        """
         if not self.username:
             print("You must be logged in to delete your account.")
             return
@@ -625,7 +692,11 @@ class ChatClient:
             self.current_operation = None
 
     def logout(self):
-        """Handle user logout."""
+        """
+        Log out current user and clean up client state.
+        
+        Sends logout request to server and cleans up local user state on success.
+        """
         if not self.username:
             print("You are not logged in.")
             return
@@ -659,7 +730,12 @@ class ChatClient:
             print("Disconnected from server.")
 
     def run(self):
-        """Run the client interface."""
+        """
+        Start the client interface.
+        
+        Displays appropriate menu based on login state and handles user operations
+        until exit is requested.
+        """
         self.connect()
         try:
             while self.running:
