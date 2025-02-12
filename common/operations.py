@@ -18,6 +18,7 @@ class Operations(IntEnum):
     SEND_MESSAGE = 15
     VIEW_UNDELIVERED_MESSAGES = 16
     LOGOUT = 17
+    DELETE_MESSAGE = 18
 
     # Additional operation, if needed
     RECEIVE_CURRENT_MESSAGE = 20
