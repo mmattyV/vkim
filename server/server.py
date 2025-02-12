@@ -12,6 +12,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "c
 from operations import Operations
 from user import User
 from serialization import deserialize_custom, serialize_custom
+from config import config
 
 
 class WireServer:
@@ -40,13 +41,13 @@ class WireServer:
         to ensure thread-safe operation in multi-client scenarios.
     """
     # Configuration Constants
-    PORT = 5050  # Port to listen on
-    SERVER_HOST_NAME = socket.gethostname()  # Host name of the machine
-    SERVER_HOST = socket.gethostbyname(SERVER_HOST_NAME)  # IPv4 address of the machine
-    HEADER = 8  # Fixed header length in bytes for message length
-    FORMAT = "utf-8"  # Encoding/decoding format
-    DISCONNECT_MESSAGE = "!DISCONNECT"  # Special disconnect message
-    ADDR = (SERVER_HOST, PORT)
+    PORT = config.PORT
+    SERVER_HOST_NAME = config.SERVER_HOST_NAME
+    SERVER_HOST = config.SERVER_HOST
+    HEADER = config.HEADER
+    FORMAT = config.FORMAT
+    DISCONNECT_MESSAGE = config.DISCONNECT_MESSAGE
+    ADDR = config.ADDR
 
     # Globals for account management
     USER_LOCK = threading.Lock()
@@ -55,6 +56,7 @@ class WireServer:
 
     # Create the server socket (IPv4, TCP)
     server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     server.bind(ADDR)
 
     def recvall(self, conn, n):
