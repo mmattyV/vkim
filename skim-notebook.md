@@ -23,6 +23,10 @@
 - Handle multiple clients (using threads or asyncio).
 
 ## Implement Business Logic
+- Establish data model for users
+- Implement account management functions
+- Implement messaging functions
+- 
 
 ### Account Management
 - Store accounts (using dictionaries or a simple database file).
