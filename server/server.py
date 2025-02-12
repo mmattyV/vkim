@@ -97,15 +97,15 @@ class WireServer:
             if msg_type_received == Operations.CHECK_USERNAME.value:
                 response = self.check_username(payload_received[0])  # Assuming payload[0] is the username.
                 self.package_send(response, conn)
-            if msg_type_received == Operations.CREATE_ACCOUNT.value:
-                # Assume payload[0] is the username.
-                response = self.create_account(payload_received[0], conn)
+            elif msg_type_received == Operations.CREATE_ACCOUNT.value:
+                # Expect payload: [username, hashed_password]
+                response = self.create_account(payload_received[0], payload_received[1], conn)
+                self.package_send(response, conn)
+            elif msg_type_received == Operations.LOGIN.value:
+                response = self.login(payload_received[0], payload_received[1], conn)
                 self.package_send(response, conn)
             elif msg_type_received == Operations.DELETE_ACCOUNT.value:
                 response = self.delete_account(payload_received[0])
-                self.package_send(response, conn)
-            elif msg_type_received == Operations.LOGIN.value:
-                response = self.login(payload_received[0], conn)
                 self.package_send(response, conn)
             elif msg_type_received == Operations.LOGOUT.value:
                 response = self.logout(payload_received[0])
@@ -216,29 +216,29 @@ class WireServer:
                 # The account does not exist; prompt the client to create a new account by supplying a password.
                 return self.payload(Operations.ACCOUNT_DOES_NOT_EXIST, [""])
             
-    def create_account(self, username, conn):
+    def create_account(self, username, hashed_password, conn):
         with self.USER_LOCK:
             if username in self.USERS:
                 return self.payload(Operations.ACCOUNT_ALREADY_EXISTS, [""])
-            new_user = User(username)
+            # Create a new user with the provided hashed password.
+            new_user = User(username, password=hashed_password)
             self.USERS[username] = new_user
             self.ACTIVE_USERS[username] = conn
-            user_obj = self.USERS[username]
-            unread_count = user_obj.undelivered_messages.qsize()
+            unread_count = new_user.undelivered_messages.qsize()
         return self.payload(Operations.SUCCESS, [username, "Auth successful", f"{unread_count}"])
 
-    def login(self, username, conn):
+    def login(self, username, hashed_password, conn):
         with self.USER_LOCK:
             if username in self.USERS:
-                self.ACTIVE_USERS[username] = conn
                 user_obj = self.USERS[username]
-                unread_count = user_obj.undelivered_messages.qsize()
-                # Return the username along with a success message and the unread count.
-                return self.payload(
-                    Operations.SUCCESS, 
-                    [username, "Auth successful", f"{unread_count}"]
-                )
-        return self.payload(Operations.FAILURE, ["Auth unsuccessful"])
+                # Check if the stored hashed password matches the one provided.
+                if user_obj.password == hashed_password:
+                    self.ACTIVE_USERS[username] = conn
+                    unread_count = user_obj.undelivered_messages.qsize()
+                    return self.payload(Operations.SUCCESS, [username, "Auth successful", f"{unread_count}"])
+                else:
+                    return self.payload(Operations.FAILURE, ["Incorrect password"])
+        return self.payload(Operations.FAILURE, ["Account does not exist"])
 
     def logout(self, username):
         with self.USER_LOCK:
