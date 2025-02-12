@@ -299,13 +299,6 @@ class WireServer:
             return self.payload(Operations.SUCCESS, [messages_str, f"{len(messages_list)} messages delivered."])
         else:
             return self.payload(Operations.FAILURE, ["No undelivered messages."])
-
-        
-        if messages:
-            joined_messages = "\n".join(messages)
-            return self.payload(Operations.SUCCESS, [joined_messages, f"{len(messages)} messages delivered."])
-        else:
-            return self.payload(Operations.FAILURE, ["No undelivered messages."])
     
     def delete_account(self, username):
         with self.USER_LOCK:
