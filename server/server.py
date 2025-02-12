@@ -138,7 +138,14 @@ class WireServer:
                 self.package_send(response, conn)
 
             elif msg_type_received == Operations.VIEW_UNDELIVERED_MESSAGES.value:
-                response = self.view_msgs(payload_received[0])
+                # Expect the payload to include the username and the count of messages requested.
+                # For example, payload_received might be: [username, "5"]
+                username = payload_received[0]
+                try:
+                    count = int(payload_received[1])
+                except (IndexError, ValueError):
+                    count = 10  # default value if not specified or invalid
+                response = self.view_msgs(username, count)
                 self.package_send(response, conn)
 
         # Remove the connection from ACTIVE_USERS if present.
@@ -275,10 +282,11 @@ class WireServer:
         """
         return self.payload(Operations.RECEIVE_CURRENT_MESSAGE, [msg])
 
-    def view_msgs(self, username):
+    def view_msgs(self, username, count):
         """
-        Retrieves all undelivered messages for the given username.
-        Returns the messages as a newline-separated string if any exist.
+        Retrieves up to 'count' undelivered messages for the given username.
+        Once retrieved, these messages are removed from the user's undelivered messages queue.
+        Returns a payload with the messages as a newline-separated string.
         """
         with self.USER_LOCK:
             if username not in self.USERS:
@@ -286,8 +294,18 @@ class WireServer:
             user_obj = self.USERS[username]
             if user_obj.undelivered_messages.empty():
                 return self.payload(Operations.FAILURE, ["No undelivered messages."])
-            messages = "\n".join(user_obj.get_current_messages())
-        return self.payload(Operations.SUCCESS, [messages, "Messages retrieved"])
+            
+            messages = []
+            for _ in range(count):
+                if user_obj.undelivered_messages.empty():
+                    break
+                messages.append(user_obj.undelivered_messages.get())
+        
+        if messages:
+            joined_messages = "\n".join(messages)
+            return self.payload(Operations.SUCCESS, [joined_messages, f"{len(messages)} messages delivered."])
+        else:
+            return self.payload(Operations.FAILURE, ["No undelivered messages."])
     
     def delete_account(self, username):
         with self.USER_LOCK:
