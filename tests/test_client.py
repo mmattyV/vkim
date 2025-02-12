@@ -1,206 +1,175 @@
-import unittest
-from unittest.mock import patch, MagicMock, call
+import io
 import socket
-import threading
 import struct
 import sys
+import threading
+import unittest
+from unittest.mock import patch, MagicMock
 import os
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "common")))
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "client")))
 
-from operations import Operations
-from serialization import serialize_custom
+# Import the client code and required enums.
+# (Make sure your PYTHONPATH is set appropriately or run tests from the project root.)
 from client import ChatClient
+from operations import Operations
 
-class TestChatClient(unittest.TestCase):
 
+# A dummy socket that records data “sent” by the client.
+class DummySocket:
+    def __init__(self):
+        self.sent_data = []
+
+    def sendall(self, data):
+        self.sent_data.append(data)
+
+    def close(self):
+        pass
+
+    # We add a dummy recv method for tests that might invoke receive logic.
+    def recv(self, n):
+        return b''
+
+
+class TestChatClientSendAndConnect(unittest.TestCase):
     def setUp(self):
-        # Start patching 'client.socket.socket'
-        patcher = patch('client.socket.socket')
-        self.addCleanup(patcher.stop)  # Ensure that patcher stops after each test
-        self.mock_socket_class = patcher.start()
-        
-        # Create a mock socket instance
-        self.mock_socket = MagicMock()
-        self.mock_socket_class.return_value = self.mock_socket
+        self.client = ChatClient()
+        # Instead of creating a real socket, use a dummy
+        self.client.sock = DummySocket()
 
-        # Initialize the ChatClient with mocked socket
-        self.client = ChatClient(host='localhost', port=12345)
+    @patch('client.serialize_custom')
+    def test_send_message_calls_socket_sendall(self, mock_serialize):
+        """Test that send_message serializes the data and calls sendall."""
+        # Arrange: have the serialization function return known bytes.
+        mock_serialize.return_value = b'serialized-data'
+        op = Operations.SEND_MESSAGE
+        payload = ["Hello, world!"]
 
-    def tearDown(self):
-        # Ensure the socket is closed after each test to prevent ResourceWarnings
-        self.client.close()
+        # Act: call send_message.
+        self.client.send_message(op, payload)
 
-    @patch('client.threading.Thread')
-    def test_connect_success(self, mock_thread_class):
-        # Simulate successful connection by ensuring connect does not raise
-        # Mock the thread to prevent actual threading
-        mock_thread = MagicMock()
-        mock_thread_class.return_value = mock_thread
+        # Assert: the dummy socket should have recorded the call.
+        self.assertIn(b'serialized-data', self.client.sock.sent_data)
+        mock_serialize.assert_called_once_with(op, payload)
 
-        # Perform the connection
-        self.client.connect()
+    @patch('socket.socket')
+    def test_connect_failure(self, mock_socket_class):
+        """Test that a connection failure results in sys.exit(1)."""
+        # Arrange: make the socket’s connect method raise an exception.
+        instance = mock_socket_class.return_value
+        instance.connect.side_effect = Exception("Connection error")
 
-        # Verify that socket.connect was called with correct parameters
-        self.mock_socket.connect.assert_called_with(('localhost', 12345))
-        self.assertTrue(self.client.running)
-        self.assertIsNotNone(self.client.receive_thread)
-
-        # Verify that the receive thread was started
-        mock_thread.start.assert_called_once()
-
-    @patch('client.threading.Thread')
-    def test_connect_failure(self, mock_thread_class):
-        # Simulate connection failure by having connect() raise an exception
-        self.mock_socket.connect.side_effect = socket.error("Connection failed")
-
-        # Patch sys.exit to prevent the test runner from exiting
-        with patch('client.sys.exit') as mock_exit, \
-             patch('builtins.print') as mock_print:
+        with self.assertRaises(SystemExit):
             self.client.connect()
 
-            # Verify that socket.connect was called
-            self.mock_socket.connect.assert_called_with(('localhost', 12345))
 
-            # Verify that an error message was printed
-            mock_print.assert_called_with("Failed to connect to server: Connection failed")
+class TestChatClientHandleResponse(unittest.TestCase):
+    def setUp(self):
+        self.client = ChatClient()
+        # We do not need a real socket in these tests.
+        self.client.sock = DummySocket()
 
-            # Verify that sys.exit was called with code 1
-            mock_exit.assert_called_with(1)
+    def test_handle_create_account_success(self):
+        """Test that a SUCCESS response during account creation updates state."""
+        # Set the current operation so that the response is processed.
+        self.client.current_operation = 'create_account'
+        self.client.create_account_event.clear()
 
-            # Ensure that running is still False
-            self.assertFalse(self.client.running)
+        # Simulate the server sending a SUCCESS response with payload:
+        # [username, message, number_of_unread_messages]
+        username = "testuser"
+        payload = [username, "Account created successfully", "0"]
+        # Call handle_server_response with the msg_type equal to Operations.SUCCESS
+        self.client.handle_server_response(Operations.SUCCESS.value, payload)
 
-    def test_send_message(self):
-        # Prepare test data
-        msg_type = Operations.LOGIN
-        payload = ['user1', 'password123']
-        serialized = serialize_custom(msg_type, payload)
+        # Check that the username was set and the event is flagged.
+        self.assertEqual(self.client.username, username)
+        self.assertEqual(self.client.number_unread_messages, 0)
+        self.assertTrue(self.client.create_account_event.is_set())
 
-        # Send message
-        self.client.sock = self.mock_socket  # Manually set the socket
-        self.client.send_message(msg_type, payload)
+    def test_handle_check_username_does_not_exist(self):
+        """Test that a CHECK_USERNAME response for a non‐existent account sets the event."""
+        self.client.current_operation = 'check_username'
+        self.client.check_username_event.clear()
 
-        # Verify that the correct data was sent
-        self.mock_socket.sendall.assert_called_with(serialized)
-        print(f"Sent {msg_type.name} with payload: {payload}")
+        # Simulate server response indicating that the account does not exist.
+        self.client.handle_server_response(Operations.ACCOUNT_DOES_NOT_EXIST.value, [])
 
-    @patch('client.ChatClient.handle_server_response')
-    def test_receive_messages(self, mock_handle_response):
-        # Prepare a serialized message to simulate server response
-        msg_type = Operations.SUCCESS
-        payload = ['Login successful', '5']  # Example payload
-        serialized = serialize_custom(msg_type, payload)
+        self.assertEqual(self.client.account_exists_response, Operations.ACCOUNT_DOES_NOT_EXIST)
+        self.assertTrue(self.client.check_username_event.is_set())
 
-        # The client expects header + payload, as per deserialize_custom
-        self.mock_socket.recv.side_effect = [
-            serialized[:8],               # Header
-            serialized[8:],               # Payload
-            b''                           # No more data, simulate server closing
-        ]
+    def test_handle_no_operation_pending(self):
+        """If no current operation is pending, a response should not cause an error."""
+        self.client.current_operation = None
 
-        # Start receive_messages in a separate thread
-        self.client.sock = self.mock_socket
-        self.client.running = True
+        with patch('sys.stdout', new=io.StringIO()) as fake_output:
+            # Call with any operation (here, SUCCESS) and a dummy payload.
+            self.client.handle_server_response(Operations.SUCCESS.value, ["dummy"])
+            self.assertIn("No operation is currently awaiting a response", fake_output.getvalue())
 
-        # Since receive_messages runs in a separate thread, we'll run it synchronously for testing
-        self.client.receive_messages()
+    def test_handle_login_success(self):
+        """Test that a successful login response updates state."""
+        self.client.current_operation = 'login'
+        self.client.login_event.clear()
 
-        # Verify that handle_server_response was called correctly
-        mock_handle_response.assert_called_with(msg_type, payload)
-        print(f"Received {msg_type.name} with payload: {payload}")
+        # Simulate a login SUCCESS response with payload:
+        # [username, message, number_of_unread_messages]
+        username = "loggedinuser"
+        payload = [username, "Login successful", "3"]
+        self.client.handle_server_response(Operations.SUCCESS.value, payload)
 
-    @patch('client.ChatClient.handle_server_response')
-    def test_receive_incomplete_payload(self, mock_handle_response):
-        # Prepare an incomplete payload
-        msg_type = Operations.SUCCESS
-        payload = ['Incomplete']
-        serialized = serialize_custom(msg_type, payload)
-        incomplete_serialized = serialized[:10]  # Truncate payload
+        self.assertEqual(self.client.username, username)
+        self.assertEqual(self.client.number_unread_messages, 3)
+        self.assertTrue(self.client.login_event.is_set())
 
-        self.mock_socket.recv.side_effect = [
-            incomplete_serialized[:8],  # Header
-            incomplete_serialized[8:],  # Incomplete payload
-            b''                         # No more data
-        ]
 
-        # Start receive_messages in a separate thread
-        self.client.sock = self.mock_socket
-        self.client.running = True
+class TestChatClientInteractiveMethods(unittest.TestCase):
+    def setUp(self):
+        self.client = ChatClient()
+        # Replace the socket with a dummy so that calls to send_message do not error.
+        self.client.sock = DummySocket()
 
-        # Run receive_messages synchronously
-        self.client.receive_messages()
+    @patch('builtins.input', side_effect=[''])  # Simulate empty username input.
+    def test_try_create_account_empty_username(self, mock_input):
+        """Test that try_create_account prints a message if username is empty."""
+        with patch('sys.stdout', new=io.StringIO()) as fake_output:
+            self.client.try_create_account()
+            self.assertIn("Username cannot be empty", fake_output.getvalue())
 
-        # handle_server_response should not be called due to incomplete payload
-        mock_handle_response.assert_not_called()
-        print("Incomplete payload received.")
+    def test_send_chat_message_without_login(self):
+        """Test that attempting to send a message without logging in prints an error."""
+        with patch('builtins.input', side_effect=['recipient', 'Hello']):
+            with patch('sys.stdout', new=io.StringIO()) as fake_output:
+                # Make sure username is None.
+                self.client.username = None
+                self.client.send_chat_message()
+                self.assertIn("You must be logged in to send messages", fake_output.getvalue())
 
-    @patch('builtins.print')
-    def test_handle_unknown_server_response(self, mock_print):
-        # Test handling an unknown message type
-        unknown_msg_type = 9999
-        payload = ['Unknown operation']
-        self.client.handle_server_response(unknown_msg_type, payload)
+    @patch('builtins.input', side_effect=['recipient', 'Hello'])
+    def test_send_chat_message_logged_in_success(self, mock_input):
+        """Test that send_chat_message calls send_message when the user is logged in.
+        
+        To avoid waiting for the event (which normally uses a timeout), we override
+        the event’s wait method to return immediately.
+        """
+        # Set a logged-in username.
+        self.client.username = "testuser"
+        # Override the event wait so that it returns True immediately.
+        self.client.send_message_event.wait = lambda timeout: True
+        # Set the response so that the method will treat it as a success.
+        self.client.send_message_response = Operations.SUCCESS
+        # Replace send_message with a MagicMock so we can inspect its call.
+        self.client.send_message = MagicMock()
 
-        # Verify that the appropriate message was printed
-        mock_print.assert_called_with(f"Unknown message type received: {unknown_msg_type}, Payload: {payload}")
-
-    @patch('builtins.print')
-    def test_handle_known_server_response(self, mock_print):
-        # Test handling a known message type
-        msg_type = Operations.SUCCESS
-        payload = ['Operation successful']
-        self.client.handle_server_response(msg_type, payload)
-
-        # Verify that the appropriate message was printed
-        mock_print.assert_called_with(f"Server Response: SUCCESS, Payload: {payload}")
-
-    @patch('builtins.input', side_effect=['testuser', 'testpass'])
-    def test_create_account(self, mock_inputs):
-        # Test the create_account method
-        self.client.sock = self.mock_socket
-        self.client.create_account()
-
-        # Verify that send_message was called with CREATE_ACCOUNT and correct payload
-        expected_payload = ['testuser', 'testpass']
-        serialized = serialize_custom(Operations.CREATE_ACCOUNT, expected_payload)
-        self.mock_socket.sendall.assert_called_with(serialized)
-        print("Sent CREATE_ACCOUNT with payload: ['testuser', 'testpass']")
-
-    @patch('builtins.input', side_effect=['loginuser', 'loginpass'])
-    def test_log_in(self, mock_inputs):
-        # Test the log_in method
-        self.client.sock = self.mock_socket
-        self.client.log_in()
-
-        # Verify that send_message was called with LOGIN and correct payload
-        expected_payload = ['loginuser', 'loginpass']
-        serialized = serialize_custom(Operations.LOGIN, expected_payload)
-        self.mock_socket.sendall.assert_called_with(serialized)
-        print("Sent LOGIN with payload: ['loginuser', 'loginpass']")
-
-    @patch('builtins.input', side_effect=['recipient', 'Hello!'])
-    def test_send_chat_message(self, mock_inputs):
-        # Test the send_chat_message method
-        self.client.sock = self.mock_socket
         self.client.send_chat_message()
 
-        # Verify that send_message was called with SEND_MESSAGE and correct payload
-        expected_payload = ['recipient', 'Hello!']
-        serialized = serialize_custom(Operations.SEND_MESSAGE, expected_payload)
-        self.mock_socket.sendall.assert_called_with(serialized)
-        print("Sent SEND_MESSAGE with payload: ['recipient', 'Hello!']")
-
-    def test_logout(self):
-        # Test the logout method
-        self.client.sock = self.mock_socket
-        self.client.logout()
-
-        # Verify that send_message was called with LOGOUT and empty payload
-        serialized = serialize_custom(Operations.LOGOUT, [])
-        self.mock_socket.sendall.assert_called_with(serialized)
-        print("Sent LOGOUT with payload: []")
+        # Check that send_message was called (once) with the SEND_MESSAGE operation.
+        self.client.send_message.assert_called_once()
+        args, kwargs = self.client.send_message.call_args
+        self.assertEqual(args[0], Operations.SEND_MESSAGE)
+        # The payload should be a string that contains the sender’s username.
+        self.assertIn("testuser", args[1][0])
 
 if __name__ == '__main__':
     unittest.main()
