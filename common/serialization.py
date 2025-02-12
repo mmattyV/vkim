@@ -23,10 +23,3 @@ def deserialize_custom(data: bytes):
     payload = payload_bytes.decode("utf-8").split("\x00")[:-1]  # Split and remove trailing empty entry
     
     return msg_type, payload
-
-# Example Usage
-serialized = serialize_custom(Operations.CREATE_ACCOUNT, ["user1", "user2", "Hello"])
-print(f"Serialized: {serialized}")
-
-msg_type, payload = deserialize_custom(serialized)
-print(f"Deserialized: {msg_type}, {payload}")
