@@ -128,7 +128,7 @@ class WireServer:
             new_user = User(username)
             self.USERS[username] = new_user
             self.ACTIVE_USERS[username] = conn
-        return self.payload(Operations.SUCCESS, "")
+        return self.payload(Operations.SUCCESS, "Account created successfully")
     
     def check_username(self, username):
         """
