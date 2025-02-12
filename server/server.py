@@ -107,12 +107,35 @@ class WireServer:
             elif msg_type_received == Operations.LOGOUT.value:
                 response = self.logout(payload_received[0])
                 self.package_send(response, conn)
-            
-            # Optionally, check for a disconnect condition based on the payload.
-            if payload_received and payload_received[0] == self.DISCONNECT_MESSAGE:
-                connected = False
+            elif msg_type_received == Operations.SEND_MESSAGE.value:
+                if payload_received[0] == self.DISCONNECT_MESSAGE:
+                    connected = False
+                    response = self.payload(Operations.SUCCESS, "")
+                else:
+                    # Expect info to be a string with sender, receiver, msg separated by newline.
+                    try:
+                        sender, receiver, msg = payload_received[0].split("\n")
+                    except ValueError:
+                        response = self.payload(Operations.FAILURE, "Invalid message format.")
+                        self.package_send(response, conn)
+                        continue
+                    response = self.send_message(sender, receiver, msg)
+                    # If the recipient is active, deliver immediately.
+                    if receiver in self.ACTIVE_USERS:
+                        msg_data = self.deliver_msgs_immediately(msg)
+                        self.package_send(msg_data, self.ACTIVE_USERS[receiver])
+                self.package_send(response, conn)
+
+            elif msg_type_received == Operations.VIEW_UNDELIVERED_MESSAGES.value:
+                response = self.view_msgs(payload_received[0])
+                self.package_send(response, conn)
+
+        # Remove the connection from ACTIVE_USERS if present.
+        for key, value in list(self.ACTIVE_USERS.items()):
+            if value == conn:
+                del self.ACTIVE_USERS[key]
+                break
         conn.close()
-        print(f"[DISCONNECTED] {addr} disconnected.")
         
     def payload(self, operation, info):
         """
@@ -190,7 +213,7 @@ class WireServer:
             if username in self.USERS:
                 self.ACTIVE_USERS[username] = conn
                 return self.payload(Operations.SUCCESS, [username, "Auth successful"])
-        return self.payload(Operations.ACCOUNT_DOES_NOT_EXIST, [""])
+        return self.payload(Operations.FAILURE, ["Auth unsuccessful"])
 
     def logout(self, username):
         with self.USER_LOCK:
