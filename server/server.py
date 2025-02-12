@@ -212,7 +212,13 @@ class WireServer:
         with self.USER_LOCK:
             if username in self.USERS:
                 self.ACTIVE_USERS[username] = conn
-                return self.payload(Operations.SUCCESS, [username, "Auth successful"])
+                user_obj = self.USERS[username]
+                unread_count = user_obj.undelivered_messages.qsize()
+                # Return the username along with a success message and the unread count.
+                return self.payload(
+                    Operations.SUCCESS, 
+                    [username, f"Auth successful. Unread messages: {unread_count}"]
+                )
         return self.payload(Operations.FAILURE, ["Auth unsuccessful"])
 
     def logout(self, username):
