@@ -242,12 +242,15 @@ class ChatClient:
 
                 msg_type, payload_length = struct.unpack("!I I", header)
                 # Now receive the payload
+                print('header is:', header)
+                print('payload_length is:', payload_length)
                 payload_bytes = self.recvall(payload_length)
-
+        
                 if len(payload_bytes) != payload_length:
                     print("Incomplete payload received.")
                     continue
                 msg_type_received, payload_received = deserialize_custom(header + payload_bytes)
+  
                 self.handle_server_response(msg_type_received, payload_received)
             except Exception as e:
                 print(f"Error receiving message: {e}")

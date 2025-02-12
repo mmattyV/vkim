@@ -137,8 +137,6 @@ class WireServer:
         # For example, assume 'data' is already in the form: (operation, [list of response strings])
         print("data is:", data)
         response_bytes = serialize_custom(data['operation'], data['info'])
-        send_length = self.calculate_send_length(response_bytes)
-        conn.send(send_length)
         conn.send(response_bytes)
 
     def start_server(self):
