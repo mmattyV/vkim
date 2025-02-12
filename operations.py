@@ -1,6 +1,6 @@
 from enum import IntEnum
 
-class Operation(IntEnum):
+class Operations(IntEnum):
     # SERVER SIDE OPERATIONS (sent to client)
     SUCCESS = 0
     FAILURE = 1
