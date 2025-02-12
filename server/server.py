@@ -222,21 +222,26 @@ class WireServer:
                 return self.payload(Operations.SUCCESS, ["Logout successful"])
         return self.payload(Operations.ACCOUNT_DOES_NOT_EXIST, ["Logout failed"])
     
-    
+    def list_accounts(self):
+        with self.USER_LOCK:
+            if len(self.USERS) == 0:
+                return self.payload(Operations.FAILURE, ["No accounts available."])
+            accounts = "\n".join(self.USERS.keys())
+        return self.payload(Operations.SUCCESS, accounts)
 
     def send_message(self, sender, receiver, msg):
         with self.USER_LOCK:
             if receiver not in self.USERS:
-                return self.payload(Operations.FAILURE, "Receiver does not exist.")
+                return self.payload(Operations.FAILURE, ["Receiver does not exist."])
             full_message = f"From {sender}: {msg}"
             if receiver in self.ACTIVE_USERS:
                 # If the receiver is active, the message is delivered immediately
                 # (handled in handle_client by sending an immediate payload).
-                return self.payload(Operations.SUCCESS, "Message delivered immediately.")
+                return self.payload(Operations.SUCCESS, ["Message delivered immediately."])
             else:
                 # Otherwise, queue the message for later.
                 self.USERS[receiver].queue_message(full_message)
-                return self.payload(Operations.SUCCESS, "Message queued for later delivery.")
+                return self.payload(Operations.SUCCESS, ["Message queued for later delivery."])
 
     def deliver_msgs_immediately(self, msg):
         """
@@ -251,10 +256,10 @@ class WireServer:
         """
         with self.USER_LOCK:
             if username not in self.USERS:
-                return self.payload(Operations.FAILURE, "User does not exist.")
+                return self.payload(Operations.FAILURE, ["User does not exist."])
             user_obj = self.USERS[username]
             if user_obj.undelivered_messages.empty():
-                return self.payload(Operations.FAILURE, "No undelivered messages.")
+                return self.payload(Operations.FAILURE, ["No undelivered messages."])
             messages = "\n".join(user_obj.get_current_messages())
         return self.payload(Operations.SUCCESS, messages)
 
@@ -266,26 +271,26 @@ class WireServer:
         """
         with self.USER_LOCK:
             if username not in self.USERS:
-                return self.payload(Operations.FAILURE, "User does not exist.")
+                return self.payload(Operations.FAILURE, ["User does not exist."])
             user_obj = self.USERS[username]
             if delete_info.upper() == "ALL":
                 count = 0
                 while not user_obj.undelivered_messages.empty():
                     user_obj.undelivered_messages.get()
                     count += 1
-                return self.payload(Operations.SUCCESS, f"Deleted all messages ({count}).")
+                return self.payload(Operations.SUCCESS, [f"Deleted all messages ({count})."])
             else:
                 try:
                     num = int(delete_info)
                 except ValueError:
-                    return self.payload(Operations.FAILURE, "Invalid deletion count.")
+                    return self.payload(Operations.FAILURE, ["Invalid deletion count."])
                 count = 0
                 for _ in range(num):
                     if user_obj.undelivered_messages.empty():
                         break
                     user_obj.undelivered_messages.get()
                     count += 1
-                return self.payload(Operations.SUCCESS, f"Deleted {count} messages.")
+                return self.payload(Operations.SUCCESS, [f"Deleted {count} messages."])
 
 if __name__ == "__main__":
     ws = WireServer()
