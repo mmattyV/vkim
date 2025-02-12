@@ -56,7 +56,10 @@ class WireServer:
                     break  # Optionally disconnect if deserialization fails
                 
                 # Dispatch based on the numeric message type.
-                if msg_type == Operations.CREATE_ACCOUNT.value:
+                if msg_type == Operations.CHECK_USERNAME.value:
+                    response = self.check_username(payload[0])  # Assuming payload[0] is the username.
+                    self.package_send(response, conn)
+                elif msg_type == Operations.CREATE_ACCOUNT.value:
                     # Assume payload[0] is the username.
                     response = self.create_account(payload[0], conn)
                     self.package_send(response, conn)
@@ -126,6 +129,31 @@ class WireServer:
             self.USERS[username] = new_user
             self.ACTIVE_USERS[username] = conn
         return self.payload(Operations.SUCCESS, "")
+    
+    def check_username(self, username):
+        """
+        Checks if a username already exists.
+        
+        If the username exists, returns a payload indicating that the account exists so that
+        the client can prompt the user to log in. Otherwise, returns a payload indicating that the
+        username is available for account creation, so the client should prompt the user to supply a password.
+        
+        Returns:
+            dict: A payload with an operation code and an info message.
+        """
+        with self.USER_LOCK:
+            if username in self.USERS:
+                # The account already exists; prompt the client for a password (login).
+                return self.payload(
+                    Operations.ACCOUNT_ALREADY_EXISTS,
+                    "Account exists. Please supply your password to log in."
+                )
+            else:
+                # The account does not exist; prompt the client to create a new account by supplying a password.
+                return self.payload(
+                    Operations.ACCOUNT_DOES_NOT_EXIST,
+                    "No account found. Please supply a password to sign up."
+                )
 
     def login(self, username, conn):
         with self.USER_LOCK:
