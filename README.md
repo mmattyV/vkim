@@ -88,6 +88,4 @@ See requirements.txt for a list of all required Python packages.
 
 ## License
 
-This project is licensed under the [Your License Name] License.
-
-Feel free to customize this README with additional details as needed for your project.
+This project is licensed under the MIT License.
