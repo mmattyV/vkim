@@ -21,29 +21,38 @@ import sys
 import os
 from datetime import datetime
 import struct
+import argparse
 
 # Add the common folder to sys.path to import shared modules.
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "common")))
-from serialization import serialize_custom, deserialize_custom
+from serialization import serialize_custom, deserialize_custom, serialize_json, deserialize_json
 from operations import Operations
 from hash_utils import hash_password
+from config import config
 
 
 class ChatClientGUI:
-    def __init__(self, root):
+    def __init__(self, root, server_host=None, server_port=None, serialize="custom"):
         """
         Initialize the ChatClientGUI instance.
         
         Parameters:
             root (tk.Tk): The root Tkinter window.
+            server_host (str, optional): The hostname of the server.
+                Defaults to the machine's hostname.
+            server_port (int, optional): The port number to connect to.
+                Defaults to 5050.
         """
         self.root = root
         self.root.title("Chat Client")
         self.root.geometry("800x600")
         
-        # Initialize client attributes
-        self.server_host = socket.gethostbyname(socket.gethostname())
-        self.server_port = 5050
+        # Set server connection details using command-line args if provided.
+        self.server_host = server_host if server_host else config.SERVER_HOST
+        self.server_port = server_port if server_port else config.PORT
+
+        self.serialize = serialize
+        
         self.sock = None
         self.receive_thread = None
         self.running = False
@@ -277,7 +286,10 @@ class ChatClientGUI:
             payload (list): The message payload data.
         """
         try:
-            serialized = serialize_custom(message_type, payload)
+            if self.serialize == "json":
+                serialized = serialize_json(message_type, payload)
+            else:
+                serialized = serialize_custom(message_type, payload)
             self.sock.sendall(serialized)
         except Exception as e:
             messagebox.showerror("Error", f"Failed to send message: {str(e)}")
@@ -302,7 +314,10 @@ class ChatClientGUI:
                 if len(payload_bytes) != payload_length:
                     continue  # Skip if payload length does not match expected value
                     
-                msg_type_received, payload_received = deserialize_custom(header + payload_bytes)
+                if self.serialize == "json":
+                    msg_type_received, payload_received = deserialize_json(header + payload_bytes)
+                else:
+                    msg_type_received, payload_received = deserialize_custom(header + payload_bytes)
                 
                 # Schedule server response handling in the main thread
                 self.root.after(0, self.handle_server_response, 
@@ -833,7 +848,10 @@ class ChatClientGUI:
         """(Duplicate) Send a message to the server."""
         try:
             print(f"Sending message type: {message_type}, payload: {payload}")
-            serialized = serialize_custom(message_type, payload)
+            if self.serialize == "json":
+                serialized = serialize_json(message_type, payload)
+            else:
+                serialized = serialize_custom(message_type, payload)
             print(f"Serialized data length: {len(serialized)}")
             self.sock.sendall(serialized)
             print("Message sent successfully")
@@ -1105,6 +1123,15 @@ class ChatClientGUI:
 
 # Main entry point for the application.
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Chat Client GUI")
+    parser.add_argument('--host', type=str, default=None,
+                        help='Server hostname (default: local machine hostname)')
+    parser.add_argument('--port', type=int, default=5050,
+                        help='Server port (default: 5050)')
+    parser.add_argument('--serialize', type=str, default="custom",
+                        help='Serialization format (default: custom)')
+    args = parser.parse_args()
+
     root = tk.Tk()
-    client = ChatClientGUI(root)
+    client = ChatClientGUI(root, server_host=args.host, server_port=args.port, serialize=args.serialize)
     client.run()

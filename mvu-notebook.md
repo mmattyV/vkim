@@ -202,3 +202,83 @@
 ✅ **Security-conscious authentication with hashed passwords** (though per-user salts needed for improvement).  
 
 Overall, the current implementation provides a **functional, scalable, and efficient** chat client, with room for improvements in **security, asynchronous programming, and persistence**. 🚀
+
+# Engineering Notebook – Serialization Comparison
+
+## Serialization Protocols Compared
+
+We built two serialization implementations for our client–server API:
+
+1. **Custom Binary Protocol:**
+   - Uses `struct.pack()` to create an 8-byte header (4 bytes unused, 4 bytes for payload length).
+   - Encodes the message as a JSON object, then prepends the header.
+   - Results in very compact messages.
+
+2. **JSON Protocol:**
+   - Simply encodes a JSON object into UTF-8 without additional binary packing.
+   - More verbose due to the inherent overhead of JSON formatting.
+
+## Test Results
+
+The following table shows the sizes of the messages generated for various operations:
+
+| Operation Code | Operation                  | Payload                        | Custom Serialization Size | JSON Serialization Size |
+|---------------|----------------------------|--------------------------------|---------------------------|-------------------------|
+| 11            | LOGIN                      | `['username', 'password']`     | 26 bytes                  | 65 bytes                |
+| 15            | SEND_MESSAGE               | `['alice\nbob\nHello, Bob!']`  | 30 bytes                  | 68 bytes                |
+| 14            | LIST_ACCOUNTS              | `['alice', 'user*']`           | 20 bytes                  | 59 bytes                |
+| 16            | VIEW_UNDELIVERED_MESSAGES  | `['alice', '10']`              | 17 bytes                  | 56 bytes                |
+| 13            | DELETE_ACCOUNT             | `['alice']`                    | 14 bytes                  | 50 bytes                |
+
+## Analysis & Remarks
+
+### Efficiency
+
+- **Custom Binary Protocol:**
+  - **Compactness:**
+    - The custom protocol produces significantly smaller messages (e.g., 26 bytes vs. 65 bytes for LOGIN).
+    - This efficiency comes from binary packing which avoids textual overhead.
+  - **Performance:**
+    - Lower message size translates to reduced network bandwidth usage and potentially lower latency, which is critical for real-time services.
+
+- **JSON Protocol:**
+  - **Ease of Use:**
+    - JSON is human-readable and easier to debug and extend.
+  - **Overhead:**
+    - The additional bytes (e.g., extra quotation marks, braces, commas) increase the message size, which may add up in high-volume applications.
+
+### Scalability
+
+- **Bandwidth:**
+  - With a high number of messages, even a difference of 10–40 bytes per message can lead to significant savings in network bandwidth when using the custom protocol.
+- **Latency:**
+  - Smaller messages reduce the transmission delay per message. In a chat service with thousands of messages per minute, this efficiency may reduce overall latency.
+- **Maintainability & Interoperability:**
+  - JSON’s verbosity is a trade-off for ease of development, interoperability, and debugging.
+  - The custom protocol is more efficient but may require more careful versioning and stricter documentation.
+
+### Trade-offs
+
+- **Custom Serialization:**
+  - **Pros:**
+    - Compact: Less bandwidth usage and lower latency.
+    - Efficient: Faster parsing in high-volume scenarios.
+  - **Cons:**
+    - Less readable: Harder to debug without specialized tools.
+    - Less flexible: Changing the protocol may be more challenging.
+
+- **JSON Serialization:**
+  - **Pros:**
+    - Human-readable: Easier to debug and integrate with other systems.
+    - Flexible: Simple to extend or modify the message format.
+  - **Cons:**
+    - Less efficient: Larger message sizes can lead to increased network usage and latency in extreme scenarios.
+
+## Conclusion
+
+Our tests show that the custom binary protocol is much more efficient in terms of message size, making it a better choice for high-throughput, low-latency systems. However, the JSON approach offers significant advantages in terms of readability, ease of debugging, and flexibility. The choice between these protocols should be guided by the specific requirements of the service:
+
+- **Use Custom Serialization** when bandwidth and latency are at a premium, and you can invest in tooling for debugging.
+- **Use JSON Serialization** when ease of development, maintainability, and interoperability are more critical.
+
+These results and observations will guide our decisions regarding efficiency and scalability in our service architecture.

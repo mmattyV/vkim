@@ -11,7 +11,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "c
 
 from operations import Operations
 from user import User
-from serialization import deserialize_custom, serialize_custom
+from serialization import deserialize_custom, serialize_custom, deserialize_json, serialize_json
 from config import config
 
 
@@ -48,6 +48,7 @@ class WireServer:
     FORMAT = config.FORMAT
     DISCONNECT_MESSAGE = config.DISCONNECT_MESSAGE
     ADDR = config.ADDR
+    SERIALIZE=config.SERIALIZE
 
     # Globals for account management
     USER_LOCK = threading.Lock()
@@ -131,7 +132,10 @@ class WireServer:
 
             # Use custom deserialization
             try:
-                msg_type_received, payload_received = deserialize_custom(header + data)
+                if self.SERIALIZE == "json":
+                    msg_type_received, payload_received = deserialize_json(header + data)
+                else:
+                    msg_type_received, payload_received = deserialize_custom(header + data)
             except ValueError as e:
                 print("Deserialization error:", e)
                 connected = False
@@ -226,7 +230,10 @@ class WireServer:
         """
         # For example, assume 'data' is already in the form: (operation, [list of response strings])
         print("data is:", data)
-        response_bytes = serialize_custom(data['operation'], data['info'])
+        if self.SERIALIZE == "json":
+            response_bytes = serialize_json(data['operation'], data['info'])
+        else:
+            response_bytes = serialize_custom(data['operation'], data['info'])
         conn.send(response_bytes)
 
     def start_server(self):

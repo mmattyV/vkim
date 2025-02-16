@@ -5,15 +5,17 @@ import struct
 import sys
 import threading
 import os
+import argparse
 
 # For blocking until a server response is received
 import time
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "common")))
 
-from serialization import serialize_custom, deserialize_custom
+from serialization import serialize_custom, deserialize_custom, serialize_json, deserialize_json
 from operations import Operations
 from hash_utils import hash_password  # For hashing passwords with sha256
+from config import config
 
 
 class ChatClient:
@@ -31,9 +33,14 @@ class ChatClient:
         running (bool): Flag indicating if client is active
         current_operation (str): Current pending operation awaiting server response
     """
-    def __init__(self, host='localhost', port=5050):
-        self.server_host = host
-        self.server_port = port
+    def __init__(self, host=None, port=None, serialize="custom"):
+        # Set server connection details using command-line args if provided.
+        self.server_host = host if host else config.SERVER_HOST_NAME
+        self.server_port = port if port else config.PORT
+
+        # Get serialization method
+        self.serialize = serialize
+   
         self.sock = None
         self.receive_thread = None
         self.running = False
@@ -108,7 +115,10 @@ class ChatClient:
             payload: List of strings for the message payload
         """
         try:
-            serialized = serialize_custom(message_type, payload)
+            if self.serialize == "json":
+                serialized = serialize_json(message_type, payload)
+            else:
+                serialized = serialize_custom(message_type, payload)
             self.sock.sendall(serialized)
             print(f"Sent {message_type.name} with payload: {payload}")
         except Exception as e:
@@ -154,7 +164,10 @@ class ChatClient:
                     continue
 
                 # Deserialize the full message (header + payload)
-                msg_type_received, payload_received = deserialize_custom(header + payload_bytes)
+                if self.serialize == "json":
+                    msg_type_received, payload_received = deserialize_json(header + payload_bytes)
+                else:
+                    msg_type_received, payload_received = deserialize_custom(header + payload_bytes)
                 self.handle_server_response(msg_type_received, payload_received)
             except Exception as e:
                 print(f"Error receiving message: {e}")
@@ -794,10 +807,14 @@ class ChatClient:
 
 
 if __name__ == "__main__":
-    # Set up connection parameters.
-    PORT = 5050  # Port to connect to.
-    SERVER_HOST_NAME = socket.gethostname()  # Host name of the machine.
-    SERVER_HOST = socket.gethostbyname(SERVER_HOST_NAME)  # IPv4 address of the machine.
+    parser = argparse.ArgumentParser(description="Chat Client Terminal")
+    parser.add_argument('--host', type=str, default=None,
+                        help='Server hostname (default: local machine hostname)')
+    parser.add_argument('--port', type=int, default=5050,
+                        help='Server port (default: 5050)')
+    parser.add_argument('--serialize', type=str, default="custom",
+                        help='Serialization method (default: custom)')
+    args = parser.parse_args()
 
-    client = ChatClient(host=SERVER_HOST, port=PORT)
+    client = ChatClient(host=args.host, port=args.port, serialize=args.serialize)
     client.run()

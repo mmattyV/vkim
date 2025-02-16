@@ -9,6 +9,7 @@ class ServerConfig:
     HEADER = 8
     FORMAT = "utf-8"
     DISCONNECT_MESSAGE = "!DISCONNECT"
+    SERIALIZE = "custom"
     
     @property
     def ADDR(self):
