@@ -10,6 +10,7 @@ This project implements a multi-threaded chat server and a Tkinter-based chat cl
 
 ### 1. Clone the Repository
 git clone https://github.com/mmattyV/vkim.git
+
 cd vkim
 
 ### 2. Create and Activate the Virtual Environment
