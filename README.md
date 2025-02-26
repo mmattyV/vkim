@@ -169,7 +169,7 @@ pip install -r requirements.txt
 
 ## Installation
 
-First, switch into the grpc directory:
+First, switch into the grpc directory (if you haven't already) with:
 
 ```bash
 cd grpc
