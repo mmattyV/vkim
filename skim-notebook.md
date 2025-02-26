@@ -462,4 +462,34 @@ These results and observations will guide our decisions regarding efficiency and
   - **Integration Testing:** While integration tests need to account for the gRPC server runtime (for instance, testing the streaming RPC), the overall testing approach is more standardized.
   - **Isolation:** The use of generated code allows you to focus on testing your application’s logic rather than the underlying transport details.
 
----
+## Impact on Data Size
+
+**gRPC/Protocol Buffers vs. Custom Serialization/JSON:**
+
+- **Efficiency and Compactness:**  
+  The gRPC method (which uses Protocol Buffers) produces very compact binary messages. For example, a `LoginRequest` is serialized into only 26 bytes, and a `UsernameRequest` (used for account deletion) is just 7 bytes. These sizes are comparable to the custom binary protocol (e.g., 26 bytes for login, 14 bytes for delete account) and are significantly smaller than their JSON-based counterparts (e.g., 65 bytes for login, 50 bytes for delete account).
+
+- **Comparison of Results:**  
+  - **LoginRequest:**  
+    - gRPC: 26 bytes  
+    - Custom: 26 bytes  
+    - JSON: 65 bytes
+  - **SendMessageRequest:**  
+    - gRPC: 25 bytes  
+    - Custom: 30 bytes  
+    - JSON: 68 bytes
+  - **ListAccountsRequest:**  
+    - gRPC: 14 bytes  
+    - Custom: 20 bytes  
+    - JSON: 59 bytes
+  - **ViewMessagesRequest:**  
+    - gRPC: 9 bytes  
+    - Custom: 17 bytes  
+    - JSON: 56 bytes
+  - **UsernameRequest (for DeleteAccount):**  
+    - gRPC: 7 bytes  
+    - Custom: 14 bytes  
+    - JSON: 50 bytes
+
+- **Conclusion:**  
+  Using gRPC/Protobuf does not increase the size of the data passed—in fact, it tends to produce messages that are as small as or even smaller than the custom binary serialization. Moreover, it is much more efficient than JSON serialization. This efficiency is one of the key advantages of Protocol Buffers, especially in high-performance or bandwidth-constrained environments.
