@@ -65,21 +65,18 @@ def generate_proto():
     """Generate Python code from the protobuf definitions"""
     print("[SETUP] Generating code from protobuf definitions...")
     
-    # Ensure output directories exist
-    os.makedirs("./grpc", exist_ok=True)
-    
     # Generate Python code from .proto file
-    proto_file = "./grpc/proto/message_service.proto"
+    proto_file = "./protos/message_service.proto"
     if not os.path.exists(proto_file):
         print(f"Error: Proto file not found: {proto_file}")
-        print("Make sure the proto file is located at: ./grpc/proto/message_service.proto")
+        print("Make sure the proto file is located at: ./protos/message_service.proto")
         return False
         
     if not run_command([
         "python", "-m", "grpc_tools.protoc",
-        "-I./grpc/proto", 
-        f"--python_out=./grpc",
-        f"--grpc_python_out=./grpc",
+        "-I./protos", 
+        f"--python_out=./",
+        f"--grpc_python_out=./",
         "message_service.proto"
     ], "Generating Python code from proto file"):
         print("Error: Failed to generate Python code from proto file.")
