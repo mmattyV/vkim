@@ -93,6 +93,7 @@ A separate script (e.g., compare_serialization.py) is provided to compare messag
 2. From the main vkim folder, run:
 
 ```bash
+cd comparison
 python compare_serialization.py
 ```
 
