@@ -9,60 +9,82 @@ This project implements a multi-threaded chat server and a Tkinter-based chat cl
 ## Setup
 
 ### 1. Clone the Repository
-git clone https://github.com/mmattyV/vkim.git
 
+```bash
+git clone https://github.com/mmattyV/vkim.git
 cd vkim
+```
 
 ### 2. Create and Activate the Virtual Environment
 If you haven't already created the virtual environment, run:
 
+```bash
 python -m venv venv
+```
 
 Then activate it:
 * On Windows:
 
+```bash
 venv\Scripts\activate
+```
 
 * On macOS/Linux:
 
+```bash
 source venv/bin/activate
+```
 
 ### 3. Install Dependencies
 Make sure you have a valid requirements.txt file in the vkim folder, then run:
 
+```bash
 pip install -r requirements.txt
+```
 
 ## Running the Server
 
 1. Open a terminal and activate your virtual environment if not already activated.
 2. Navigate to the server folder:
 
+```bash
 cd server
+```
 
 3. Run the server:
 
+```bash
 python server.py
+```
 
 The server will start and listen on the configured host and port (default values are set in config.py). You can override these using command-line arguments (e.g., --host and --port).
 Example:
 
+```bash
 python server.py --host 127.0.0.1 --port 5050
+```
 
 ## Running the Client
 
 1. Open another terminal and activate your virtual environment if not already activated.
 2. Navigate to the client folder:
 
+```bash
 cd client
+```
 
 3. Run the client GUI:
 
+```bash
 python gui.py
+```
 
 You can also specify command-line options for the server host, port, and serialization method.
 Example:
 
+```bash
 python gui.py --host 127.0.0.1 --port 5050 --serialize json
+```
 
 ## Testing & Performance Comparison
 
@@ -70,7 +92,9 @@ A separate script (e.g., compare_serialization.py) is provided to compare messag
 1. Ensure the virtual environment is activated.
 2. From the main vkim folder, run:
 
+```bash
 python compare_serialization.py
+```
 
 The script will print the byte sizes for several test messages to help evaluate efficiency and scalability.
 
