@@ -12,7 +12,7 @@ This project implements a multi-threaded chat server and a Tkinter-based chat cl
 
 ```bash
 git clone https://github.com/mmattyV/vkim.git
-cd vkim
+cd vkim/sockets
 ```
 
 ### 2. Create and Activate the Virtual Environment
@@ -135,7 +135,7 @@ This is a reimplementation of a chat application using gRPC instead of a custom 
 
 ```bash
 git clone https://github.com/mmattyV/vkim.git
-cd vkim
+cd vkim/grpc
 ```
 
 ### 2. Create and Activate the Virtual Environment
