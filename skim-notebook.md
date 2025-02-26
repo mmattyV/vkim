@@ -437,3 +437,29 @@ Our tests show that the custom binary protocol is much more efficient in terms o
 - **Use JSON Serialization** when ease of development, maintainability, and interoperability are more critical.
 
 These results and observations will guide our decisions regarding efficiency and scalability in our service architecture.
+
+# 2/26/25:
+
+# Implementing gRPC
+
+## Server-Side Perspective
+
+- **Ease of Development:**
+  - **Framework Benefits:** Using gRPC provides a solid framework for handling concurrent RPC calls, streaming responses, and service discovery. This allows the server to focus on business logic rather than networking details.
+  - **Complexity:** The server must adhere to the structure imposed by the generated code, which may require some adjustments if you’re transitioning from a custom solution. However, it generally simplifies overall implementation.
+
+- **Data Size Impact:**
+  - **Structured Data:** The server sends and receives data as defined by Protocol Buffers. Although there is some extra metadata and overhead, the size increase is modest and well-optimized by protobuf.
+  - **Predictability:** Having a defined schema makes it easier to manage and optimize the data payloads.
+
+- **Changes in Server Structure:**
+  - **Service Implementation:** The server is now structured around a gRPC service implementation. Instead of managing raw sockets and threading manually, you implement service methods (like `Login`, `CreateAccount`, `SendMessage`, etc.) that are invoked by the gRPC runtime.
+  - **Concurrency Model:** gRPC uses a thread pool (or asynchronous handling) to manage incoming requests, so your server code is more focused on service logic rather than connection management.
+  - **Separation of Concerns:** Business logic is encapsulated within well-defined methods, which leads to cleaner and more maintainable code.
+
+- **Impact on Testing:**
+  - **Unit Testing:** Testing server methods becomes more straightforward because you can simulate gRPC requests by directly calling the service methods with dummy request objects and a fake context.
+  - **Integration Testing:** While integration tests need to account for the gRPC server runtime (for instance, testing the streaming RPC), the overall testing approach is more standardized.
+  - **Isolation:** The use of generated code allows you to focus on testing your application’s logic rather than the underlying transport details.
+
+---

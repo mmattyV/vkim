@@ -282,3 +282,30 @@ Our tests show that the custom binary protocol is much more efficient in terms o
 - **Use JSON Serialization** when ease of development, maintainability, and interoperability are more critical.
 
 These results and observations will guide our decisions regarding efficiency and scalability in our service architecture.
+
+# 2/26/25
+
+# Implementing gRPC
+
+## Client-Side Perspective
+
+- **Ease of Development:**
+  - **Simplification:** Using gRPC and Protocol Buffers greatly simplifies network communication on the client side. Instead of handling raw socket connections and custom serialization, you work with generated stubs and well-defined methods.
+  - **Learning Curve:** There is an initial learning curve (e.g., understanding streaming, metadata, and deadlines), but overall it makes development more straightforward once you’re familiar with it.
+
+- **Data Size Impact:**
+  - **Overhead:** The data passed is now structured in a well-defined format (Protocol Buffers) which adds a small overhead compared to raw data. However, the benefits of type safety and schema evolution usually outweigh this cost.
+  - **Efficiency:** Protobufs are highly efficient in size and speed, so the increase in data size is minimal.
+
+- **Changes in Client Structure:**
+  - **Abstraction:** The client no longer deals with low-level socket programming. Instead, it interacts with a high-level API generated from the `.proto` files.
+  - **Modularity:** Code is now more modular; for instance, login, account management, and message streaming are clearly separated into dedicated RPC calls.
+  - **Error Handling:** With gRPC, error handling is integrated into the RPC mechanism, which can simplify the client’s error management logic.
+
+- **Impact on Testing:**
+  - **Unit Testing:** Testing becomes easier because you can mock the gRPC stubs instead of simulating raw socket behavior.
+  - **Integration Testing:** The integration tests need to account for gRPC’s behavior (such as streaming and deadlines), but overall tests tend to be more reliable due to the standardized communication protocol.
+  - **Isolation:** It is simpler to isolate client logic since you are no longer testing custom serialization logic.
+
+---
+
