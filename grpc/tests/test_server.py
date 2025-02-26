@@ -1,307 +1,293 @@
 import unittest
-from queue import Queue
+import threading
+import time
+import fnmatch
 import sys
 import os
-import threading
-from unittest.mock import Mock, patch
-import socket
-import struct
+from queue import Queue
+from unittest.mock import MagicMock, Mock
+import importlib
 
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+# Add the project root to sys.path so that the server package can be found.
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+# Dynamically import the grpc_server module to avoid circular imports.
+grpc_server = importlib.import_module("server.grpc_server")
+ChatServiceServicer = grpc_server.ChatServiceServicer
+serve = grpc_server.serve
 
-from server.server import WireServer
 from common.user import User
-from common.operations import Operations
-from common.serialization import serialize_custom, deserialize_custom
+import message_service_pb2
 
-class DummyConnection:
+# Define a dummy context for simulating gRPC calls.
+class DummyContext:
     def __init__(self):
-        self.sent_data = []
-        self.closed = False
-    
-    def send(self, data):
-        self.sent_data.append(data)
-        
-    def close(self):
-        self.closed = True
+        self.aborted = False
+        self.abort_code = None
+        self.abort_details = None
+    def is_active(self):
+        return True
+    def abort(self, code, details):
+        self.aborted = True
+        self.abort_code = code
+        self.abort_details = details
+        raise Exception(f"Aborted: {code}, {details}")
 
-class TestWireServer(unittest.TestCase):
+class TestChatServiceServicer(unittest.TestCase):
     def setUp(self):
-        """Set up test environment before each test"""
-        self.server = WireServer()
-        self.server.USERS = {}
-        self.server.ACTIVE_USERS = {}
-        self.dummy_conn = DummyConnection()
-        
-    def tearDown(self):
-        """Clean up after each test"""
-        self.server.USERS.clear()
-        self.server.ACTIVE_USERS.clear()
+        # Create an instance of ChatServiceServicer.
+        self.servicer = ChatServiceServicer()
+        # Use empty dictionaries for testing.
+        self.servicer.users = {}
+        self.servicer.active_users = {}
+        self.servicer.message_queues = {}
+        self.ctx = DummyContext()
 
-    # Account Management Tests
+    # --- Account Management Tests ---
     def test_check_username_nonexistent(self):
-        """Test checking a username that doesn't exist"""
-        result = self.server.check_username("newuser")
-        self.assertEqual(result["operation"], Operations.ACCOUNT_DOES_NOT_EXIST)
+        req = message_service_pb2.UsernameRequest(username="newuser")
+        resp = self.servicer.CheckUsername(req, self.ctx)
+        self.assertFalse(resp.exists)
+        self.assertEqual(resp.message, "Username available")
 
     def test_check_username_exists(self):
-        """Test checking a username that exists"""
-        self.server.USERS["existinguser"] = User("existinguser")
-        result = self.server.check_username("existinguser")
-        self.assertEqual(result["operation"], Operations.ACCOUNT_ALREADY_EXISTS)
+        self.servicer.users["existinguser"] = User("existinguser")
+        req = message_service_pb2.UsernameRequest(username="existinguser")
+        resp = self.servicer.CheckUsername(req, self.ctx)
+        self.assertTrue(resp.exists)
+        self.assertEqual(resp.message, "Account exists")
 
     def test_create_account_success(self):
-        """Test successful account creation"""
-        result = self.server.create_account("newuser", "hashedpass", self.dummy_conn)
-        self.assertEqual(result["operation"], Operations.SUCCESS)
-        self.assertIn("newuser", self.server.USERS)
-        self.assertEqual(self.server.USERS["newuser"].password, "hashedpass")
-        self.assertEqual(self.server.ACTIVE_USERS["newuser"], self.dummy_conn)
+        req = message_service_pb2.CreateAccountRequest(username="newuser", hashed_password="hashedpass")
+        resp = self.servicer.CreateAccount(req, self.ctx)
+        self.assertTrue(resp.success)
+        self.assertEqual(resp.username, "newuser")
+        self.assertEqual(resp.unread_count, 0)
+        self.assertIn("newuser", self.servicer.users)
+        self.assertIn("newuser", self.servicer.message_queues)
 
     def test_create_account_duplicate(self):
-        """Test creating account with existing username"""
-        self.server.USERS["existinguser"] = User("existinguser")
-        result = self.server.create_account("existinguser", "hashedpass", self.dummy_conn)
-        self.assertEqual(result["operation"], Operations.ACCOUNT_ALREADY_EXISTS)
+        self.servicer.users["existinguser"] = User("existinguser")
+        req = message_service_pb2.CreateAccountRequest(username="existinguser", hashed_password="hashedpass")
+        resp = self.servicer.CreateAccount(req, self.ctx)
+        self.assertFalse(resp.success)
+        self.assertEqual(resp.message, "Account already exists")
 
     def test_login_success(self):
-        """Test successful login"""
         user = User("testuser", password="hashedpass")
-        self.server.USERS["testuser"] = user
-        result = self.server.login("testuser", "hashedpass", self.dummy_conn)
-        self.assertEqual(result["operation"], Operations.SUCCESS)
-        self.assertIn("testuser", self.server.ACTIVE_USERS)
+        self.servicer.users["testuser"] = user
+        req = message_service_pb2.LoginRequest(username="testuser", hashed_password="hashedpass")
+        resp = self.servicer.Login(req, self.ctx)
+        self.assertTrue(resp.success)
+        self.assertEqual(resp.username, "testuser")
+        self.assertEqual(resp.unread_count, user.undelivered_messages.qsize())
 
     def test_login_wrong_password(self):
-        """Test login with incorrect password"""
         user = User("testuser", password="hashedpass")
-        self.server.USERS["testuser"] = user
-        result = self.server.login("testuser", "wrongpass", self.dummy_conn)
-        self.assertEqual(result["operation"], Operations.FAILURE)
+        self.servicer.users["testuser"] = user
+        req = message_service_pb2.LoginRequest(username="testuser", hashed_password="wrongpass")
+        resp = self.servicer.Login(req, self.ctx)
+        self.assertFalse(resp.success)
+        self.assertEqual(resp.message, "Incorrect password")
 
     def test_login_nonexistent_user(self):
-        """Test login with non-existent username"""
-        result = self.server.login("nonexistent", "pass", self.dummy_conn)
-        self.assertEqual(result["operation"], Operations.FAILURE)
+        req = message_service_pb2.LoginRequest(username="nonexistent", hashed_password="pass")
+        resp = self.servicer.Login(req, self.ctx)
+        self.assertFalse(resp.success)
+        self.assertEqual(resp.message, "Account does not exist")
 
     def test_logout_success(self):
-        """Test successful logout"""
-        self.server.USERS["testuser"] = User("testuser")
-        self.server.ACTIVE_USERS["testuser"] = self.dummy_conn
-        result = self.server.logout("testuser")
-        self.assertEqual(result["operation"], Operations.SUCCESS)
-        self.assertNotIn("testuser", self.server.ACTIVE_USERS)
+        self.servicer.users["testuser"] = User("testuser")
+        self.servicer.active_users["testuser"] = self.ctx
+        req = message_service_pb2.UsernameRequest(username="testuser")
+        resp = self.servicer.Logout(req, self.ctx)
+        self.assertTrue(resp.success)
+        self.assertEqual(resp.message, "Logout successful")
+        self.assertNotIn("testuser", self.servicer.active_users)
 
     def test_logout_not_logged_in(self):
-        """Test logout when user isn't logged in"""
-        self.server.USERS["testuser"] = User("testuser")
-        result = self.server.logout("testuser")
-        self.assertEqual(result["operation"], Operations.ACCOUNT_DOES_NOT_EXIST)
+        self.servicer.users["testuser"] = User("testuser")
+        req = message_service_pb2.UsernameRequest(username="testuser")
+        resp = self.servicer.Logout(req, self.ctx)
+        self.assertFalse(resp.success)
+        self.assertEqual(resp.message, "User not logged in")
 
-    # Message Management Tests
-    def test_send_message_to_active_user(self):
-        """Test sending message to online user"""
+    def test_delete_account_success(self):
+        user = User("testuser")
+        self.servicer.users["testuser"] = user
+        self.servicer.active_users["testuser"] = self.ctx
+        req = message_service_pb2.UsernameRequest(username="testuser")
+        resp = self.servicer.DeleteAccount(req, self.ctx)
+        self.assertTrue(resp.success)
+        self.assertEqual(resp.message, "Account deleted successfully")
+        self.assertNotIn("testuser", self.servicer.users)
+        self.assertNotIn("testuser", self.servicer.active_users)
+
+    def test_delete_account_with_unread_messages(self):
+        user = User("testuser")
+        user.queue_message("Unread message")
+        self.servicer.users["testuser"] = user
+        req = message_service_pb2.UsernameRequest(username="testuser")
+        resp = self.servicer.DeleteAccount(req, self.ctx)
+        self.assertFalse(resp.success)
+        self.assertEqual(resp.message, "Cannot delete account with unread messages")
+        self.assertIn("testuser", self.servicer.users)
+
+    def test_delete_nonexistent_account(self):
+        req = message_service_pb2.UsernameRequest(username="nonexistent")
+        resp = self.servicer.DeleteAccount(req, self.ctx)
+        self.assertFalse(resp.success)
+        self.assertEqual(resp.message, "Account does not exist")
+
+    # --- Account Listing Tests ---
+    def test_list_accounts_authenticated(self):
+        self.servicer.users = {
+            "alice": User("alice"),
+            "bob": User("bob"),
+            "carol": User("carol")
+        }
+        req = message_service_pb2.ListAccountsRequest(username="alice", pattern="*")
+        resp = self.servicer.ListAccounts(req, self.ctx)
+        self.assertTrue(resp.success)
+        self.assertIn("alice", resp.accounts)
+        self.assertIn("bob", resp.accounts)
+        self.assertIn("carol", resp.accounts)
+        self.assertEqual(resp.message, "Found 3 matching accounts")
+
+    def test_list_accounts_not_authenticated(self):
+        req = message_service_pb2.ListAccountsRequest(username="nonexistent", pattern="*")
+        resp = self.servicer.ListAccounts(req, self.ctx)
+        self.assertFalse(resp.success)
+        self.assertEqual(resp.message, "User not authenticated")
+
+    def test_list_accounts_no_matches(self):
+        self.servicer.users = {
+            "alice": User("alice"),
+            "bob": User("bob")
+        }
+        req = message_service_pb2.ListAccountsRequest(username="alice", pattern="carol*")
+        resp = self.servicer.ListAccounts(req, self.ctx)
+        self.assertTrue(resp.success)
+        self.assertEqual(len(resp.accounts), 0)
+        self.assertEqual(resp.message, "Found 0 matching accounts")
+
+    # --- Message Management Tests ---
+    def test_send_message_active_recipient(self):
         sender = "sender"
         receiver = "receiver"
-        self.server.USERS[sender] = User(sender)
-        self.server.USERS[receiver] = User(receiver)
-        self.server.ACTIVE_USERS[receiver] = self.dummy_conn
-        
-        result = self.server.send_message(sender, receiver, "Hello!")
-        self.assertEqual(result["operation"], Operations.SUCCESS)
-        self.assertIn("From sender: Hello!", self.server.USERS[receiver].read_messages)
+        self.servicer.users[sender] = User(sender)
+        receiver_user = User(receiver)
+        self.servicer.users[receiver] = receiver_user
+        # Ensure the message queue exists for the receiver.
+        self.servicer.message_queues[receiver] = Queue()
+        # Simulate that the receiver is active.
+        self.servicer.active_users[receiver] = self.ctx
+        req = message_service_pb2.SendMessageRequest(sender=sender, recipient=receiver, content="Hello!")
+        resp = self.servicer.SendMessage(req, self.ctx)
+        self.assertTrue(resp.success)
+        # Check that the message was added to the receiver's read_messages.
+        self.assertIn("From sender", receiver_user.read_messages[0])
+        self.assertIn("Hello!", receiver_user.read_messages[0])
 
-    def test_send_message_to_offline_user(self):
-        """Test sending message to offline user"""
+    def test_send_message_offline_recipient(self):
         sender = "sender"
         receiver = "receiver"
-        self.server.USERS[sender] = User(sender)
-        self.server.USERS[receiver] = User(receiver)
-        
-        result = self.server.send_message(sender, receiver, "Hello!")
-        self.assertEqual(result["operation"], Operations.SUCCESS)
-        self.assertFalse(self.server.USERS[receiver].undelivered_messages.empty())
+        self.servicer.users[sender] = User(sender)
+        receiver_user = User(receiver)
+        self.servicer.users[receiver] = receiver_user
+        # Ensure the message queue exists even if the recipient is offline.
+        self.servicer.message_queues[receiver] = Queue()
+        req = message_service_pb2.SendMessageRequest(sender=sender, recipient=receiver, content="Hello!")
+        resp = self.servicer.SendMessage(req, self.ctx)
+        self.assertTrue(resp.success)
+        # For an offline user, the message should be queued.
+        self.assertFalse(receiver_user.undelivered_messages.empty())
 
-    def test_send_message_to_nonexistent_user(self):
-        """Test sending message to non-existent user"""
-        result = self.server.send_message("sender", "nonexistent", "Hello!")
-        self.assertEqual(result["operation"], Operations.FAILURE)
+    def test_send_message_nonexistent_receiver(self):
+        self.servicer.users["sender"] = User("sender")
+        req = message_service_pb2.SendMessageRequest(sender="sender", recipient="nonexistent", content="Hello!")
+        resp = self.servicer.SendMessage(req, self.ctx)
+        self.assertFalse(resp.success)
+        self.assertEqual(resp.message, "Recipient not found")
 
     def test_view_messages_success(self):
-        """Test viewing messages successfully"""
         username = "testuser"
         user = User(username)
-        user.queue_message("Message 1")
-        user.queue_message("Message 2")
-        self.server.USERS[username] = user
-        
-        result = self.server.view_msgs(username, 2)
-        self.assertEqual(result["operation"], Operations.SUCCESS)
-        self.assertIn("Message 1", result["info"][0])
-        self.assertIn("Message 2", result["info"][0])
+        user.queue_message("From sender at 2025-02-26 12:00:00: Hello")
+        user.queue_message("From sender at 2025-02-26 12:01:00: Hi again")
+        self.servicer.users[username] = user
+        req = message_service_pb2.ViewMessagesRequest(username=username, count=2)
+        resp = self.servicer.ViewMessages(req, self.ctx)
+        self.assertTrue(resp.success)
+        self.assertEqual(len(resp.messages), 2)
+        self.assertEqual(resp.message, "2 messages delivered")
 
     def test_view_messages_no_messages(self):
-        """Test viewing messages when there are none"""
         username = "testuser"
-        self.server.USERS[username] = User(username)
-        result = self.server.view_msgs(username, 1)
-        self.assertEqual(result["operation"], Operations.FAILURE)
+        self.servicer.users[username] = User(username)
+        req = message_service_pb2.ViewMessagesRequest(username=username, count=1)
+        resp = self.servicer.ViewMessages(req, self.ctx)
+        self.assertFalse(resp.success)
+        self.assertEqual(resp.message, "No undelivered messages")
 
-    def test_view_messages_partial_count(self):
-        """Test viewing fewer messages than available"""
-        username = "testuser"
-        user = User(username)
-        for i in range(5):
-            user.queue_message(f"Message {i}")
-        self.server.USERS[username] = user
-        
-        result = self.server.view_msgs(username, 3)
-        self.assertEqual(result["operation"], Operations.SUCCESS)
-        messages = result["info"][0].split("\n")
-        self.assertEqual(len(messages), 3)
-
+    # --- Delete Messages Tests ---
     def test_delete_messages_all(self):
-        """Test deleting all messages"""
         username = "testuser"
         user = User(username)
         user.add_read_message("Message 1")
         user.add_read_message("Message 2")
-        self.server.USERS[username] = user
-        
-        result = self.server.delete_message(username, "ALL")
-        self.assertEqual(result["operation"], Operations.SUCCESS)
-        self.assertEqual(len(self.server.USERS[username].read_messages), 0)
+        self.servicer.users[username] = user
+        req = message_service_pb2.DeleteMessagesRequest(username=username, delete_info="ALL")
+        resp = self.servicer.DeleteMessages(req, self.ctx)
+        self.assertTrue(resp.success)
+        self.assertEqual(resp.message, "Deleted 2 messages")
+        self.assertEqual(len(user.read_messages), 0)
 
     def test_delete_messages_count(self):
-        """Test deleting specific number of messages"""
         username = "testuser"
         user = User(username)
         for i in range(5):
             user.add_read_message(f"Message {i}")
-        self.server.USERS[username] = user
-        
-        result = self.server.delete_message(username, "3")
-        self.assertEqual(result["operation"], Operations.SUCCESS)
-        self.assertEqual(len(self.server.USERS[username].read_messages), 2)
+        self.servicer.users[username] = user
+        req = message_service_pb2.DeleteMessagesRequest(username=username, delete_info="3")
+        resp = self.servicer.DeleteMessages(req, self.ctx)
+        self.assertTrue(resp.success)
+        self.assertEqual(resp.message, "Deleted 3 messages")
+        self.assertEqual(len(user.read_messages), 2)
 
     def test_delete_messages_invalid_count(self):
-        """Test deleting messages with invalid count"""
         username = "testuser"
         user = User(username)
         user.add_read_message("Message")
-        self.server.USERS[username] = user
-        
-        result = self.server.delete_message(username, "invalid")
-        self.assertEqual(result["operation"], Operations.FAILURE)
+        self.servicer.users[username] = user
+        req = message_service_pb2.DeleteMessagesRequest(username=username, delete_info="invalid")
+        resp = self.servicer.DeleteMessages(req, self.ctx)
+        self.assertFalse(resp.success)
+        self.assertEqual(resp.message, "No messages deleted")
 
-    # Account Listing Tests
-    def test_list_accounts_all(self):
-        """Test listing all accounts"""
-        self.server.USERS = {
-            "user1": User("user1"),
-            "user2": User("user2"),
-            "user3": User("user3")
-        }
-        result = self.server.list_accounts("*")
-        self.assertEqual(result["operation"], Operations.SUCCESS)
-        self.assertIn("user1", result["info"][0])
-        self.assertIn("user2", result["info"][0])
-        self.assertIn("user3", result["info"][0])
-
-    def test_list_accounts_pattern(self):
-        """Test listing accounts matching pattern"""
-        self.server.USERS = {
-            "test1": User("test1"),
-            "test2": User("test2"),
-            "other": User("other")
-        }
-        result = self.server.list_accounts("test*")
-        self.assertEqual(result["operation"], Operations.SUCCESS)
-        self.assertIn("test1", result["info"][0])
-        self.assertIn("test2", result["info"][0])
-        self.assertNotIn("other", result["info"][0])
-
-    def test_list_accounts_no_matches(self):
-        """Test listing accounts with no matches"""
-        self.server.USERS = {
-            "user1": User("user1"),
-            "user2": User("user2")
-        }
-        result = self.server.list_accounts("nonexistent*")
-        self.assertEqual(result["operation"], Operations.FAILURE)
-
-    # Delete Account Tests
-    def test_delete_account_success(self):
-        """Test successful account deletion"""
+    # --- Receive Messages (Streaming) Test ---
+    def test_receive_messages_stream(self):
         username = "testuser"
         user = User(username)
-        self.server.USERS[username] = user
-        self.server.ACTIVE_USERS[username] = self.dummy_conn
-        
-        result = self.server.delete_account(username)
-        self.assertEqual(result["operation"], Operations.SUCCESS)
-        self.assertNotIn(username, self.server.USERS)
-        self.assertNotIn(username, self.server.ACTIVE_USERS)
-
-    def test_delete_account_with_messages(self):
-        """Test deleting account with unread messages"""
-        username = "testuser"
-        user = User(username)
-        user.queue_message("Unread message")
-        self.server.USERS[username] = user
-        
-        result = self.server.delete_account(username)
-        self.assertEqual(result["operation"], Operations.FAILURE)
-        self.assertIn(username, self.server.USERS)
-
-    def test_delete_nonexistent_account(self):
-        """Test deleting non-existent account"""
-        result = self.server.delete_account("nonexistent")
-        self.assertEqual(result["operation"], Operations.ACCOUNT_DOES_NOT_EXIST)
-
-    # Connection Management Tests
-    def test_recvall_complete_data(self):
-        """Test receiving complete data"""
-        mock_conn = Mock()
-        mock_conn.recv.side_effect = [b"1234", b"5678"]
-        result = self.server.recvall(mock_conn, 8)
-        self.assertEqual(result, b"12345678")
-
-    def test_recvall_incomplete_data(self):
-        """Test receiving incomplete data"""
-        mock_conn = Mock()
-        mock_conn.recv.side_effect = [b"1234", b""]
-        result = self.server.recvall(mock_conn, 8)
-        self.assertEqual(result, b"1234")
-
-    def test_recvall_connection_error(self):
-        """Test receiving data with connection error"""
-        mock_conn = Mock()
-        mock_conn.recv.side_effect = Exception("Connection error")
-        result = self.server.recvall(mock_conn, 8)
-        self.assertEqual(result, b"")
-
-    # Concurrent Operation Tests
-    def test_concurrent_message_send(self):
-        """Test sending messages concurrently"""
-        receiver = "receiver"
-        self.server.USERS[receiver] = User(receiver)
-        
-        def send_message(sender_id):
-            return self.server.send_message(f"sender{sender_id}", receiver, f"Message {sender_id}")
-            
-        threads = []
-        results = []
-        for i in range(10):
-            thread = threading.Thread(target=lambda: results.append(send_message(i)))
-            threads.append(thread)
-            thread.start()
-            
-        for thread in threads:
-            thread.join()
-            
-        self.assertTrue(all(r["operation"] == Operations.SUCCESS for r in results))
-        self.assertEqual(self.server.USERS[receiver].undelivered_messages.qsize(), 10)
+        self.servicer.users[username] = user
+        timestamp = "2025-02-26 12:00:00"
+        dummy_msg = message_service_pb2.MessageResponse(sender="sender", content="Hello", timestamp=timestamp)
+        self.servicer.message_queues[username] = Queue()
+        self.servicer.message_queues[username].put(dummy_msg)
+        # Create a short-lived dummy context.
+        class ShortLivedContext(DummyContext):
+            def __init__(self):
+                super().__init__()
+                self.calls = 0
+            def is_active(self):
+                self.calls += 1
+                return self.calls < 5
+        short_ctx = ShortLivedContext()
+        req = message_service_pb2.UsernameRequest(username=username)
+        messages = list(self.servicer.ReceiveMessages(req, short_ctx))
+        self.assertGreater(len(messages), 0)
+        self.assertEqual(messages[0].sender, "sender")
+        self.assertEqual(messages[0].content, "Hello")
+        self.assertEqual(messages[0].timestamp, timestamp)
 
 if __name__ == '__main__':
     unittest.main()
