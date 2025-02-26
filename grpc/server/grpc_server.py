@@ -210,39 +210,37 @@ class ChatServiceServicer(message_service_pb2_grpc.ChatServiceServicer):
                     success=False,
                     message="Sender not found"
                 )
-                
             if recipient not in self.users:
                 return message_service_pb2.StatusResponse(
                     success=False,
                     message="Recipient not found"
                 )
-                
-            full_message = f"From {sender}: {content}"
             
-            # Create message data
+            timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+            # Create full message string that now includes a timestamp.
+            full_message = f"From {sender} at {timestamp}: {content}"
+            
+            # Create message data for streaming (which includes the timestamp)
             message_data = message_service_pb2.MessageResponse(
                 sender=sender,
                 content=content,
-                timestamp=time.strftime("%Y-%m-%d %H:%M:%S")
+                timestamp=timestamp
             )
             
-            # Queue message for streaming to recipient if they have an active stream
-            if recipient in self.message_queues:
+            # If the recipient is actively streaming, deliver immediately.
+            if recipient in self.active_users:
                 self.message_queues[recipient].put(message_data)
-                
-            # If recipient is not active, store message for later delivery
-            if recipient not in self.active_users:
-                self.users[recipient].queue_message(full_message)
-                return message_service_pb2.StatusResponse(
-                    success=True,
-                    message="Message queued for later delivery"
-                )
-            else:
-                # Message will be delivered via the stream
                 self.users[recipient].add_read_message(full_message)
                 return message_service_pb2.StatusResponse(
                     success=True,
                     message="Message sent for immediate delivery"
+                )
+            else:
+                # Otherwise, queue the message for later delivery.
+                self.users[recipient].queue_message(full_message)
+                return message_service_pb2.StatusResponse(
+                    success=True,
+                    message="Message queued for later delivery"
                 )
                 
     def ViewMessages(self, request, context):
@@ -267,38 +265,44 @@ class ChatServiceServicer(message_service_pb2_grpc.ChatServiceServicer):
                     message="No undelivered messages"
                 )
                 
-            # Get messages from the queue
+            # Get messages from the user's undelivered messages queue
             messages_list = user.get_current_messages(count)
             
             # Convert to message data objects
             message_data_list = []
             for msg in messages_list:
-                # Parse message format "From sender: content"
+                # Expected format: "From <sender> at <timestamp>: <content>"
                 if msg.startswith("From "):
-                    parts = msg.split(": ", 1)
-                    if len(parts) == 2:
-                        sender = parts[0].replace("From ", "")
-                        content = parts[1]
+                    try:
+                        # Remove the "From " prefix
+                        remainder = msg[5:]
+                        # Split into sender/timestamp and content on the first occurrence of ": "
+                        sender_and_timestamp, content = remainder.split(": ", 1)
+                        # Further split sender_and_timestamp on " at " to separate sender and timestamp
+                        sender, timestamp = sender_and_timestamp.split(" at ", 1)
                         message_data_list.append(message_service_pb2.MessageData(
                             sender=sender,
                             content=content,
-                            timestamp=""  # Original messages don't have timestamps
+                            timestamp=timestamp
                         ))
-                    else:
-                        # Fallback for improperly formatted messages
-                        message_data_list.append(message_service_pb2.MessageData(
-                            sender="Unknown",
-                            content=msg,
-                            timestamp=""
-                        ))
+                    except Exception:
+                        # Fallback if parsing fails
+                        parts = msg.split(": ", 1)
+                        if len(parts) == 2:
+                            sender = parts[0].replace("From ", "")
+                            content = parts[1]
+                            message_data_list.append(message_service_pb2.MessageData(
+                                sender=sender,
+                                content=content,
+                                timestamp=""
+                            ))
                 else:
-                    # Fallback for improperly formatted messages
                     message_data_list.append(message_service_pb2.MessageData(
                         sender="Unknown",
                         content=msg,
                         timestamp=""
                     ))
-                    
+                        
             return message_service_pb2.ViewMessagesResponse(
                 success=True,
                 messages=message_data_list,
