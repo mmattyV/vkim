@@ -98,11 +98,11 @@ def setup():
         
     print("\n[SETUP] Setup completed successfully!")
     print("\nTo run the server:")
-    print("  python -m grpc.server.grpc_server")
+    print("  python -m server.grpc_server")
     print("\nTo run the console client:")
-    print("  python -m grpc.client.grpc_client")
+    print("  python -m client.grpc_client")
     print("\nTo run the GUI client:")
-    print("  python -m grpc.client.grpc_gui_client")
+    print("  python -m client.grpc_gui")
     
     return True
 

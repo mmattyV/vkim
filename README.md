@@ -86,6 +86,126 @@ See requirements.txt for a list of all required Python packages.
 * Ensure that the virtual environment (venv) is active when running the server or client.
 * Use the provided command-line options to override default configuration parameters as needed.
 
+# gRPC Chat Application
+
+This is a reimplementation of a chat application using gRPC instead of a custom wire protocol.
+
+## Project Structure
+
+```
+grpc/
+├── proto/
+│   └── message_service.proto  # Protocol Buffers definition for the chat service
+├── server/
+│   └── grpc_server.py         # gRPC server implementation
+└── client/
+    ├── grpc_client.py         # Command-line client implementation
+    └── grpc_gui_client.py     # GUI client implementation using Tkinter
+```
+
+Additional files:
+- `setup.py`: Setup script to install dependencies and generate code from proto files
+- `engineering_notebook.md`: Analysis of migrating from custom protocol to gRPC
+
+## Features
+
+- User account management (create, login, logout, delete)
+- Message sending and receiving
+- Real-time message delivery using streaming RPCs
+- Message history management
+- User account listing
+
+## Requirements
+
+- Python 3.6 or higher
+- grpcio >= 1.70.0
+- grpcio-tools >= 1.70.0
+- protobuf >= 5.20.0
+
+## Installation
+
+First, switch into the grpc directory:
+
+```bash
+cd grpc
+```
+
+Run the setup script to install dependencies and generate code from the proto file:
+
+```bash
+python setup.py
+```
+
+If you already have the dependencies installed, you can skip the dependency installation:
+
+```bash
+python setup.py --skip-deps
+```
+
+## Running the Application
+
+### Starting the Server
+
+```bash
+python -m server.grpc_server 
+```
+
+### Running the Command-line Client
+
+```bash
+python -m client.grpc_client 
+```
+
+### Running the GUI Client
+
+```bash
+python -m client.grpc_gui 
+```
+
+## Comparison with Original Implementation
+
+This implementation demonstrates several advantages over the original socket-based version:
+
+1. **Reduced code complexity**: Elimination of custom serialization and socket management
+2. **Enhanced capabilities**: Built-in support for streaming
+3. **Better architecture**: Clear separation of service definition and implementation
+4. **Easier maintenance**: Auto-generated client and server code from the protocol definition
+
+For a detailed analysis, see the [Engineering Notebook]
+
+## Implementation Details
+
+### Protocol Definition
+
+The chat service is defined in `message_service.proto` using Protocol Buffers, which defines:
+
+- Service methods for all operations
+- Request and response message formats
+- Streaming RPC for real-time message delivery
+
+### Server Implementation
+
+The server implements the service interface defined in the proto file, handling:
+
+- User authentication and account management
+- Message routing and delivery
+- Concurrent client connections
+
+### Client Implementations
+
+Two client implementations are provided:
+
+1. **Command-line client**: Text-based interface for all chat operations
+2. **GUI client**: Tkinter-based graphical interface with real-time message updates
+
+### Generated Files
+
+When you run the setup script, it generates the following files in the grpc directory:
+- `message_service_pb2.py`: Contains the Protocol Buffer message classes
+- `message_service_pb2_grpc.py`: Contains the gRPC client and server classes
+
+These generated files should not be edited manually.
+
 ## License
 
 This project is licensed under the MIT License.
