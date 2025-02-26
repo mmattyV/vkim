@@ -90,23 +90,6 @@ See requirements.txt for a list of all required Python packages.
 
 This is a reimplementation of a chat application using gRPC instead of a custom wire protocol.
 
-## Project Structure
-
-```
-grpc/
-├── proto/
-│   └── message_service.proto  # Protocol Buffers definition for the chat service
-├── server/
-│   └── grpc_server.py         # gRPC server implementation
-└── client/
-    ├── grpc_client.py         # Command-line client implementation
-    └── grpc_gui_client.py     # GUI client implementation using Tkinter
-```
-
-Additional files:
-- `setup.py`: Setup script to install dependencies and generate code from proto files
-- `engineering_notebook.md`: Analysis of migrating from custom protocol to gRPC
-
 ## Features
 
 - User account management (create, login, logout, delete)
