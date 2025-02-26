@@ -30,14 +30,13 @@ class ChatClient:
     def start_receiving(self, callback):
         """
         Start a background thread that receives streaming messages from the server.
-        The callback function (provided by the GUI) is called for every new message.
+        The callback function (provided by the GUI) is called for every new chat message.
         """
         if self.username:
             def receive():
                 request = message_service_pb2.UsernameRequest(username=self.username)
                 try:
                     for msg in self.stub.ReceiveMessages(request):
-                        # Pass the formatted message to the callback
                         callback(f"[New Message from {msg.sender}]: {msg.content} ({msg.timestamp})")
                 except grpc.RpcError as e:
                     callback("Message stream ended.")
@@ -47,16 +46,17 @@ class ChatClient:
 class ChatClientGUI:
     """
     GUI for the gRPC Chat Client.
-    Provides a login/create account screen and, once authenticated,
-    a main chat window with options to send messages, list accounts,
-    view messages, delete messages/account, and log out.
+    The chat window (text area) displays only messages from other users.
+    All other operations (login, account creation, errors, etc.) are shown via popup windows.
+    The unread messages counter updates live.
     """
     def __init__(self, root, host=None, port=None):
         self.root = root
+        self.root.geometry("800x600")
         self.root.title("gRPC Chat Client")
-        self.root.geometry("600x500")
         self.client = ChatClient(host, port)
         self.create_widgets()
+        self.update_unread_counter()
 
     def create_widgets(self):
         # Create two main frames: one for login and one for chatting.
@@ -74,19 +74,25 @@ class ChatClientGUI:
         ttk.Button(self.login_frame, text="Create Account", command=self.handle_create_account).pack(pady=5)
 
         # ----- Chat Frame -----
-        # Scrolled text area for displaying messages.
-        self.message_display = scrolledtext.ScrolledText(self.chat_frame, state='disabled', wrap=tk.WORD)
+        # Scrolled text area for displaying chat messages.
+        self.message_display = scrolledtext.ScrolledText(self.chat_frame, state='disabled', wrap=tk.WORD, height=15)
         self.message_display.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
-        # Entry for recipient username.
-        self.recipient_entry = ttk.Entry(self.chat_frame)
-        self.recipient_entry.pack(fill=tk.X, padx=5, pady=5)
-        self.recipient_entry.insert(0, "Recipient Username")
-        # Entry for composing a message.
-        self.message_input = ttk.Entry(self.chat_frame)
-        self.message_input.pack(fill=tk.X, padx=5, pady=5)
+
+        # Input frame for recipient and message.
+        input_frame = ttk.Frame(self.chat_frame)
+        input_frame.pack(fill=tk.X, padx=5, pady=5)
+        ttk.Label(input_frame, text="Recipient:").grid(row=0, column=0, sticky=tk.W, padx=2, pady=2)
+        self.recipient_entry = ttk.Entry(input_frame)
+        self.recipient_entry.grid(row=0, column=1, sticky=tk.EW, padx=2, pady=2)
+        input_frame.columnconfigure(1, weight=1)
+        ttk.Label(input_frame, text="Message:").grid(row=1, column=0, sticky=tk.W, padx=2, pady=2)
+        self.message_input = ttk.Entry(input_frame)
+        self.message_input.grid(row=1, column=1, sticky=tk.EW, padx=2, pady=2)
+
         # Send button.
         ttk.Button(self.chat_frame, text="Send Message", command=self.send_message).pack(pady=5)
-        # A frame to hold additional operation buttons.
+
+        # Button frame for additional operations.
         button_frame = ttk.Frame(self.chat_frame)
         button_frame.pack(fill=tk.X, padx=5, pady=5)
         ttk.Button(button_frame, text="List Accounts", command=self.list_accounts).pack(side=tk.LEFT, padx=5)
@@ -95,11 +101,21 @@ class ChatClientGUI:
         ttk.Button(button_frame, text="Delete Account", command=self.delete_account).pack(side=tk.LEFT, padx=5)
         ttk.Button(button_frame, text="Logout", command=self.logout).pack(side=tk.LEFT, padx=5)
 
+        # Live unread messages counter.
+        self.unread_label = ttk.Label(self.chat_frame, text="Unread Messages: 0", font=("Arial", 10, "italic"))
+        self.unread_label.pack(pady=5)
+
         # Initially show the login frame.
         self.login_frame.pack(expand=True, fill=tk.BOTH)
 
-    def display_message(self, message):
-        """Append a message (with newline) to the display area."""
+    def update_unread_counter(self):
+        """Update the unread message counter label and schedule the next update."""
+        count = self.client.number_unread_messages
+        self.unread_label.config(text=f"Unread Messages: {count}")
+        self.root.after(1000, self.update_unread_counter)
+
+    def display_chat_message(self, message):
+        """Append a chat message to the message display area."""
         self.message_display.configure(state='normal')
         self.message_display.insert(tk.END, f"{message}\n")
         self.message_display.see(tk.END)
@@ -119,9 +135,8 @@ class ChatClientGUI:
             if resp.success:
                 self.client.username = resp.username
                 self.client.number_unread_messages = resp.unread_count
-                self.display_message(f"Logged in as {resp.username} ({resp.unread_count} unread messages)")
-                # Start receiving real-time messages.
-                self.client.start_receiving(self.display_message)
+                messagebox.showinfo("Login Successful", f"Logged in as {resp.username}")
+                self.client.start_receiving(self.display_chat_message)
                 self.login_frame.forget()
                 self.chat_frame.pack(expand=True, fill=tk.BOTH)
             else:
@@ -130,13 +145,12 @@ class ChatClientGUI:
             messagebox.showerror("Error", f"Login error: {str(e)}")
 
     def handle_create_account(self):
-        """Handle account creation by checking availability and then calling CreateAccount RPC."""
+        """Handle account creation by calling the CreateAccount RPC."""
         username = self.username_entry.get().strip()
         password = self.password_entry.get().strip()
         if not username or not password:
             messagebox.showerror("Error", "Username and password cannot be empty")
             return
-        # Check if account exists.
         check_req = message_service_pb2.UsernameRequest(username=username)
         try:
             check_resp = self.client.stub.CheckUsername(check_req)
@@ -150,8 +164,8 @@ class ChatClientGUI:
                 if create_resp.success:
                     self.client.username = create_resp.username
                     self.client.number_unread_messages = create_resp.unread_count
-                    self.display_message(f"Account created and logged in as {create_resp.username} ({create_resp.unread_count} unread messages)")
-                    self.client.start_receiving(self.display_message)
+                    messagebox.showinfo("Account Created", f"Account created and logged in as {create_resp.username}")
+                    self.client.start_receiving(self.display_chat_message)
                     self.login_frame.forget()
                     self.chat_frame.pack(expand=True, fill=tk.BOTH)
                 else:
@@ -167,7 +181,7 @@ class ChatClientGUI:
         recipient = self.recipient_entry.get().strip()
         msg_text = self.message_input.get().strip()
         if not recipient or not msg_text:
-            messagebox.showerror("Error", "Recipient and message cannot be empty.")
+            messagebox.showerror("Error", "Both recipient and message must be provided.")
             return
         send_req = message_service_pb2.SendMessageRequest(
             sender=self.client.username,
@@ -176,13 +190,14 @@ class ChatClientGUI:
         )
         try:
             resp = self.client.stub.SendMessage(send_req)
-            self.display_message(resp.message)
+            # Use a popup only for confirmation; chat display remains reserved for messages.
+            messagebox.showinfo("Send Message", resp.message)
             self.message_input.delete(0, tk.END)
         except Exception as e:
             messagebox.showerror("Error", f"Send message error: {str(e)}")
 
     def list_accounts(self):
-        """Call the ListAccounts RPC and display the matching account names."""
+        """Call the ListAccounts RPC and display matching accounts in a popup."""
         if not self.client.username:
             messagebox.showerror("Error", "You must be logged in to list accounts.")
             return
@@ -196,14 +211,17 @@ class ChatClientGUI:
             resp = self.client.stub.ListAccounts(list_req)
             if resp.success:
                 accounts = "\n".join(resp.accounts)
-                self.display_message(f"Accounts:\n{accounts}\n{resp.message}")
+                messagebox.showinfo("Accounts", f"Accounts:\n{accounts}\n{resp.message}")
             else:
                 messagebox.showerror("Error", resp.message)
         except Exception as e:
             messagebox.showerror("Error", f"List accounts error: {str(e)}")
 
     def view_messages(self):
-        """Call the ViewMessages RPC to retrieve undelivered messages and display them."""
+        """
+        Call the ViewMessages RPC to retrieve undelivered messages,
+        print them into the chat display area, and update the unread counter.
+        """
         if not self.client.username:
             messagebox.showerror("Error", "You must be logged in to view messages.")
             return
@@ -218,15 +236,17 @@ class ChatClientGUI:
             resp = self.client.stub.ViewMessages(view_req)
             if resp.success:
                 for msg in resp.messages:
-                    self.display_message(f"From {msg.sender}: {msg.content} (at {msg.timestamp})")
-                self.display_message(resp.message)
+                    self.display_chat_message(f"From {msg.sender}: {msg.content} (at {msg.timestamp})")
+                self.display_chat_message(resp.message)
+                # Update unread counter (assume messages have been viewed)
+                self.client.number_unread_messages = 0
             else:
                 messagebox.showerror("Error", resp.message)
         except Exception as e:
             messagebox.showerror("Error", f"View messages error: {str(e)}")
 
     def delete_messages(self):
-        """Call the DeleteMessages RPC to remove messages and display the server response."""
+        """Call the DeleteMessages RPC and display the server response in a popup."""
         if not self.client.username:
             messagebox.showerror("Error", "You must be logged in to delete messages.")
             return
@@ -236,12 +256,12 @@ class ChatClientGUI:
         delete_req = message_service_pb2.DeleteMessagesRequest(username=self.client.username, delete_info=delete_info.upper())
         try:
             resp = self.client.stub.DeleteMessages(delete_req)
-            self.display_message(resp.message)
+            messagebox.showinfo("Delete Messages", resp.message)
         except Exception as e:
             messagebox.showerror("Error", f"Delete messages error: {str(e)}")
 
     def delete_account(self):
-        """Call the DeleteAccount RPC to delete the current account."""
+        """Call the DeleteAccount RPC and display the server response in a popup."""
         if not self.client.username:
             messagebox.showerror("Error", "You must be logged in to delete your account.")
             return
@@ -250,7 +270,7 @@ class ChatClientGUI:
             try:
                 resp = self.client.stub.DeleteAccount(del_req)
                 if resp.success:
-                    self.display_message(resp.message)
+                    messagebox.showinfo("Delete Account", resp.message)
                     self.client.username = None
                     self.chat_frame.forget()
                     self.login_frame.pack(expand=True, fill=tk.BOTH)
@@ -260,7 +280,7 @@ class ChatClientGUI:
                 messagebox.showerror("Error", f"Delete account error: {str(e)}")
 
     def logout(self):
-        """Call the Logout RPC to log out the current user and switch back to the login view."""
+        """Call the Logout RPC and display the result in a popup."""
         if not self.client.username:
             messagebox.showerror("Error", "You are not logged in.")
             return
@@ -268,7 +288,7 @@ class ChatClientGUI:
         try:
             resp = self.client.stub.Logout(logout_req)
             if resp.success:
-                self.display_message(resp.message)
+                messagebox.showinfo("Logout", resp.message)
                 self.client.username = None
                 self.chat_frame.forget()
                 self.login_frame.pack(expand=True, fill=tk.BOTH)
