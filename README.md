@@ -90,7 +90,7 @@ python gui.py --host 127.0.0.1 --port 5050 --serialize json
 
 A separate script (e.g., compare_serialization.py) is provided to compare message sizes between the custom binary protocol and the JSON protocol. To run this script:
 1. Ensure the virtual environment is activated.
-2. From the main vkim folder, run:
+2. From the sockets folder, run:
 
 ```bash
 cd comparison
