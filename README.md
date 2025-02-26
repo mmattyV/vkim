@@ -1,4 +1,4 @@
-# Chat Client-Server Project
+# Chat Client-Server Project Using Custom/JSON Serialization
 
 This project implements a multi-threaded chat server and a Tkinter-based chat client. Two serialization methods are provided—a custom binary protocol and a JSON-based protocol—for transmitting messages between the client and server.
 
@@ -128,6 +128,43 @@ This is a reimplementation of a chat application using gRPC instead of a custom 
 - grpcio >= 1.70.0
 - grpcio-tools >= 1.70.0
 - protobuf >= 5.20.0
+
+## Setup
+
+### 1. Clone the Repository
+
+```bash
+git clone https://github.com/mmattyV/vkim.git
+cd vkim
+```
+
+### 2. Create and Activate the Virtual Environment
+If you haven't already created the virtual environment, run:
+
+```bash
+python -m venv venv
+```
+
+Then activate it:
+* On Windows:
+
+```bash
+venv\Scripts\activate
+```
+
+* On macOS/Linux:
+
+```bash
+source venv/bin/activate
+```
+
+### 3. Install Dependencies
+Make sure you have a valid requirements.txt file in the vkim folder, then run:
+
+```bash
+pip install -r requirements.txt
+```
+
 
 ## Installation
 
