@@ -1,16 +1,12 @@
 syntax = "proto3";
+
 package chat;
 
-// Import the original message service proto to reuse message types
+// Import the original message service proto to reuse message types (like StatusResponse)
 import "message_service.proto";
 
 service ReplicationService {
-  // Leader election
-  rpc RequestVote(VoteRequest) returns (VoteResponse);
-  rpc SendHeartbeat(HeartbeatRequest) returns (HeartbeatResponse);
-  rpc TransferLeadership(LeaderTransferRequest) returns (StatusResponse);
-  
-  // State synchronization
+  // State synchronization (Raft-style)
   rpc SyncOperations(SyncRequest) returns (SyncResponse);
   rpc GetState(StateRequest) returns (StateResponse);
   
@@ -18,9 +14,16 @@ service ReplicationService {
   rpc JoinCluster(JoinRequest) returns (StatusResponse);
   rpc LeaveCluster(LeaveRequest) returns (StatusResponse);
   rpc GetClusterInfo(ClusterInfoRequest) returns (ClusterInfoResponse);
+
+  // -------------------------------------------------------
+  // Primary-Backup direct state update
+  // -------------------------------------------------------
+  rpc PushUpdate(UpdateRequest) returns (StatusResponse);
 }
 
-// Leader election messages
+// -------------------------------------------------------
+// Leader election messages (from your original code)
+// -------------------------------------------------------
 message VoteRequest {
   string candidate_id = 1;
   int64 term = 2;
@@ -53,7 +56,9 @@ message LeaderTransferRequest {
   int64 term = 2;
 }
 
+// -------------------------------------------------------
 // State synchronization messages
+// -------------------------------------------------------
 message Operation {
   int64 log_id = 1;
   string operation_type = 2;
@@ -84,7 +89,9 @@ message StateResponse {
   bytes state_data = 3;
 }
 
+// -------------------------------------------------------
 // Cluster configuration messages
+// -------------------------------------------------------
 message JoinRequest {
   string replica_id = 1;
   string host = 2;
@@ -113,4 +120,12 @@ message ReplicaInfo {
   int32 port = 3;
   bool is_alive = 4;
   int64 last_heartbeat = 5;
+}
+
+// -------------------------------------------------------
+// Primary-Backup direct update
+// -------------------------------------------------------
+message UpdateRequest {
+  string update_type = 1;
+  map<string, string> parameters = 2;
 }

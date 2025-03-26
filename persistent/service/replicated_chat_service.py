@@ -1,4 +1,5 @@
 # service/replicated_chat_service.py
+
 import os
 import sys
 import time
@@ -8,189 +9,189 @@ import logging
 import grpc
 from concurrent import futures
 
-# Add common directory to path for imports
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+# Adjust the path if needed
+# sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-# Import original chat service classes
 from common.user import User
 import message_service_pb2
 import message_service_pb2_grpc
 
-# Import replication manager
-from replication.replica_manager import ReplicaManager
-
-# Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 class ReplicatedChatServiceServicer(message_service_pb2_grpc.ChatServiceServicer):
     """
-    Implementation of the gRPC ChatService with replication support.
-    This extends the original chat service to provide persistence and fault tolerance.
+    Simplified Chat Service that uses a Primary–Backup manager instead of Raft.
     """
-    def __init__(self, replica_manager):
-        # Store the replica manager
-        self.replica_manager = replica_manager
+    def __init__(self, db, pb_manager):
+        """
+        :param db: Instance of ChatDatabase for persistent storage.
+        :param pb_manager: Instance of PrimaryBackupManager for replication.
+        """
+        self.db = db
+        self.pb_manager = pb_manager
         
         # Locks for thread safety
         self.user_lock = threading.Lock()
         
-        # User session management (in-memory only, not persistent)
-        self.active_users = {}  # Dictionary to store active client streams {username: stream_context}
-        self.message_queues = {}  # {username: Queue of messages}
+        # Ephemeral session management
+        self.active_users = {}   # {username: stream_context}
+        self.message_queues = {} # {username: [MessageResponse, ...]}
         
-        # Cache for User objects (prevent frequent database access)
+        # In-memory user cache
         self.user_cache = {}
         self.cache_lock = threading.Lock()
         
-        logger.info("Replicated Chat Service initialized")
-        
+        logger.info("Replicated Chat Service initialized (Primary–Backup).")
+    
+    # ----------------------------------------------------------------------
+    # Helper methods
+    # ----------------------------------------------------------------------
+    
     def get_user(self, username):
-        """Get a User object for the given username, creating it if necessary."""
+        """
+        Retrieve or create a User object in an in-memory cache.
+        Loads unread messages from the database if necessary.
+        """
         with self.cache_lock:
             if username not in self.user_cache:
-                # Check if user exists in database
-                db = self.replica_manager.db
-                if db.user_exists(username):
-                    # Create User object from database data
+                # Check if user exists in DB
+                if self.db.user_exists(username):
                     user = User(username)
                     
-                    # Load unread messages from database
-                    unread_messages = db.get_unread_messages(username, 1000)
+                    # Load unread messages
+                    unread_messages = self.db.get_unread_messages(username, 1000)
                     for msg in unread_messages:
                         formatted_msg = f"From {msg['sender']} at {msg['timestamp']}: {msg['content']}"
                         user.queue_message(formatted_msg)
-                        
+                    
                     self.user_cache[username] = user
                 else:
                     return None
-                    
             return self.user_cache[username]
-            
-    # service/replicated_chat_service.py (continued)
+    
     def invalidate_cache(self, username=None):
-        """Invalidate the user cache for a specific user or all users."""
+        """
+        Invalidate the user cache for a specific user or all users.
+        """
         with self.cache_lock:
             if username:
-                if username in self.user_cache:
-                    del self.user_cache[username]
+                self.user_cache.pop(username, None)
             else:
                 self.user_cache.clear()
-                
+    
+    def _is_primary(self):
+        """
+        Check if this replica is currently the primary.
+        """
+        return (self.pb_manager.role == "primary")
+    
+    def _reject_non_primary(self, context):
+        """
+        Helper to return an error response if this replica is not the primary.
+        You could also set trailing metadata with the known primary host/port.
+        """
+        # Optional: set metadata to inform the client about the primary
+        # context.set_trailing_metadata((
+        #     ('primary_host', self.pb_manager.primary_host or ""),
+        #     ('primary_port', str(self.pb_manager.primary_port or 0)),
+        #     ('redirect', 'true')
+        # ))
+        
+        return message_service_pb2.StatusResponse(
+            success=False,
+            message="This replica is not the primary. Please contact the primary for write operations."
+        )
+    
+    # ----------------------------------------------------------------------
+    # gRPC Method Implementations
+    # ----------------------------------------------------------------------
+    
     def CheckUsername(self, request, context):
-        """Check if a username already exists"""
-        print(f"Checking username: {request.username}")
+        """
+        Check if a username already exists (READ).
+        This can be served by any replica.
+        """
+        logger.info(f"Checking username: {request.username}")
         
-        db = self.replica_manager.db
-        exists = db.user_exists(request.username)
-        
+        exists = self.db.user_exists(request.username)
         return message_service_pb2.UsernameResponse(
             exists=exists,
             message="Account exists" if exists else "Username available"
         )
-        
+    
     def CreateAccount(self, request, context):
-        """Create a new user account"""
+        """
+        Create a new user account (WRITE).
+        Only allowed on primary. Then replicate to backups.
+        """
         username = request.username
         hashed_password = request.hashed_password
+        logger.info(f"CreateAccount request for: {username}")
         
-        logger.info(f"Creating account for: {username}")
+        # 1. Ensure we are primary
+        if not self._is_primary():
+            # Return an AuthResponse to match the method signature
+            return message_service_pb2.AuthResponse(
+                success=False,
+                message="Not primary. Please use the primary for writes."
+            )
         
-        db = self.replica_manager.db
-        
-        # Check if username exists
-        if db.user_exists(username):
+        # 2. Check if user exists
+        if self.db.user_exists(username):
             return message_service_pb2.AuthResponse(
                 success=False,
                 message="Account already exists"
             )
-            
-        # Forward operation to leader if we're not the leader
-        result = self.replica_manager.handle_client_operation(
-            "create_user", 
-            username=username, 
-            hashed_password=hashed_password
+        
+        # 3. Create locally
+        self.db.create_user(username, hashed_password)
+        self.invalidate_cache(username)
+        self.message_queues[username] = []
+        
+        # 4. Replicate to backups
+        self.pb_manager.push_update_to_backups(
+            update_type="create_user",
+            parameters={
+                "username": username,
+                "hashed_password": hashed_password
+            }
         )
         
-        # Log the result for debugging
-        logger.info(f"Operation result: {result}")
-        
-        # Check for redirection
-        if isinstance(result, dict) and result.get("redirect"):
-            # Set gRPC metadata for client redirection
-            logger.info(f"Redirecting to leader: {result['leader_id']}")
-            context.set_trailing_metadata((
-                ('leader_host', result['leader_host']),
-                ('leader_port', str(result['leader_port'])),
-                ('leader_id', result['leader_id']),
-                ('redirect', 'true')
-            ))
-            return message_service_pb2.AuthResponse(
-                success=False,
-                message="Operation redirected to leader"
-            )
-            
-        # Check for error
-        if isinstance(result, dict) and result.get("error"):
-            logger.warning(f"Operation error: {result.get('message')}")
-            return message_service_pb2.AuthResponse(
-                success=False,
-                message=result.get("message", "Unknown error")
-            )
-        
-        # If we got a log_id (operation was successful)
-        if isinstance(result, int):
-            logger.info(f"Account created with log_id: {result}")
-            # Create user in local database (if leader) and invalidate cache
-            self.invalidate_cache(username)
-            
-            # Initialize message queue for streaming
-            self.message_queues[username] = []
-            
-            return message_service_pb2.AuthResponse(
-                success=True,
-                username=username,
-                message="Account created successfully",
-                unread_count=0
-            )
-        
-        # Unknown result type
-        logger.error(f"Unknown result type: {type(result)}")
         return message_service_pb2.AuthResponse(
-            success=False,
-            message="Internal server error"
+            success=True,
+            username=username,
+            message="Account created successfully",
+            unread_count=0
         )
-        
+    
     def Login(self, request, context):
-        """Authenticate a user"""
+        """
+        Log in a user (READ + ephemeral session).
+        Allowed on any replica if we want to support read on backups.
+        """
         username = request.username
         hashed_password = request.hashed_password
-        
         logger.info(f"Login attempt for: {username}")
         
-        db = self.replica_manager.db
-        
-        # Check if user exists and password matches
-        if not db.user_exists(username):
+        if not self.db.user_exists(username):
             return message_service_pb2.AuthResponse(
                 success=False,
                 message="Account does not exist"
             )
-            
-        if not db.verify_user(username, hashed_password):
+        
+        if not self.db.verify_user(username, hashed_password):
             return message_service_pb2.AuthResponse(
                 success=False,
                 message="Incorrect password"
             )
-            
-        # Get or create user object
-        user = self.get_user(username)
         
-        # Track active user
+        # Setup ephemeral user object if not cached
+        user = self.get_user(username)
         if username not in self.message_queues:
             self.message_queues[username] = []
-            
-        unread_count = db.get_unread_message_count(username)
+        
+        unread_count = self.db.get_unread_message_count(username)
         
         return message_service_pb2.AuthResponse(
             success=True,
@@ -198,11 +199,12 @@ class ReplicatedChatServiceServicer(message_service_pb2_grpc.ChatServiceServicer
             message="Login successful",
             unread_count=unread_count
         )
-        
+    
     def Logout(self, request, context):
-        """Log out a user"""
+        """
+        Log out a user (ephemeral only).
+        """
         username = request.username
-        
         logger.info(f"Logout request for: {username}")
         
         with self.user_lock:
@@ -212,227 +214,168 @@ class ReplicatedChatServiceServicer(message_service_pb2_grpc.ChatServiceServicer
                     success=True,
                     message="Logout successful"
                 )
-                
+        
         return message_service_pb2.StatusResponse(
             success=False,
             message="User not logged in"
         )
-        
+    
     def DeleteAccount(self, request, context):
-        """Delete a user account"""
+        """
+        Delete a user account (WRITE).
+        Only on primary; replicate to backups.
+        """
         username = request.username
+        logger.info(f"DeleteAccount request for: {username}")
         
-        logger.info(f"Delete account request for: {username}")
+        if not self._is_primary():
+            return message_service_pb2.StatusResponse(
+                success=False,
+                message="Not primary. Please use the primary for writes."
+            )
         
-        db = self.replica_manager.db
-        
-        # Check if user exists
-        if not db.user_exists(username):
+        if not self.db.user_exists(username):
             return message_service_pb2.StatusResponse(
                 success=False,
                 message="Account does not exist"
             )
-            
-        # Forward operation to leader if we're not the leader
-        result = self.replica_manager.handle_client_operation(
-            "delete_user",
-            username=username
-        )
         
-        # Check for redirection
-        if isinstance(result, dict) and result.get("redirect"):
-            # Set gRPC metadata for client redirection
-            context.set_trailing_metadata((
-                ('leader_host', result['leader_host']),
-                ('leader_port', str(result['leader_port'])),
-                ('leader_id', result['leader_id']),
-                ('redirect', 'true')
-            ))
-            return message_service_pb2.StatusResponse(
-                success=False,
-                message="Operation redirected to leader"
-            )
-            
-        # Check for error
-        if isinstance(result, dict) and result.get("error"):
-            return message_service_pb2.StatusResponse(
-                success=False,
-                message=result.get("message", "Unknown error")
-            )
-            
-        # Delete user from local memory
+        # Perform local delete
+        success, msg = self.db.delete_user(username)
+        if not success:
+            return message_service_pb2.StatusResponse(success=False, message=msg)
+        
+        # Cleanup ephemeral
         with self.user_lock:
-            if username in self.active_users:
-                del self.active_users[username]
-                
-            if username in self.message_queues:
-                del self.message_queues[username]
-                
+            self.active_users.pop(username, None)
+            self.message_queues.pop(username, None)
         self.invalidate_cache(username)
+        
+        # Replicate to backups
+        self.pb_manager.push_update_to_backups(
+            update_type="delete_user",
+            parameters={"username": username}
+        )
         
         return message_service_pb2.StatusResponse(
             success=True,
             message="Account deleted successfully"
         )
-        
+    
     def ListAccounts(self, request, context):
-        """List user accounts matching a pattern"""
+        """
+        List user accounts matching a pattern (READ).
+        Can be served by any replica.
+        """
         username = request.username
         pattern = request.pattern
+        logger.info(f"ListAccounts from {username} with pattern: {pattern}")
         
-        logger.info(f"List accounts request from {username} with pattern: {pattern}")
-        
-        db = self.replica_manager.db
-        
-        # Check if user exists
-        if not db.user_exists(username):
+        if not self.db.user_exists(username):
             return message_service_pb2.ListAccountsResponse(
                 success=False,
                 message="User not authenticated"
             )
-            
+        
         if not pattern:
             pattern = "*"
-            
-        # Find accounts matching the pattern
-        matching_accounts = db.list_users(pattern)
         
+        matching_accounts = self.db.list_users(pattern)
         return message_service_pb2.ListAccountsResponse(
             success=True,
             accounts=matching_accounts,
             message=f"Found {len(matching_accounts)} matching accounts"
         )
-        
+    
     def SendMessage(self, request, context):
-        """Send a message from one user to another"""
+        """
+        Send a message from one user to another (WRITE).
+        Only on primary; replicate to backups.
+        """
         sender = request.sender
         recipient = request.recipient
         content = request.content
+        logger.info(f"SendMessage from {sender} to {recipient}")
         
-        logger.info(f"Message from {sender} to {recipient}")
+        if not self._is_primary():
+            return message_service_pb2.StatusResponse(
+                success=False,
+                message="Not primary. Please use the primary for writes."
+            )
         
-        db = self.replica_manager.db
-        
-        # Verify sender and recipient exist
-        if not db.user_exists(sender):
+        # Verify existence
+        if not self.db.user_exists(sender):
             return message_service_pb2.StatusResponse(
                 success=False,
                 message="Sender not found"
             )
-            
-        if not db.user_exists(recipient):
+        if not self.db.user_exists(recipient):
             return message_service_pb2.StatusResponse(
                 success=False,
                 message="Recipient not found"
             )
-            
-        # Forward operation to leader if we're not the leader
-        result = self.replica_manager.handle_client_operation(
-            "queue_message",
-            sender=sender,
-            recipient=recipient,
-            content=content
+        
+        # Queue message locally
+        timestamp = self.db.queue_message(sender, recipient, content)
+        
+        # Push to backups
+        self.pb_manager.push_update_to_backups(
+            update_type="queue_message",
+            parameters={
+                "sender": sender,
+                "recipient": recipient,
+                "content": content
+            }
         )
         
-        # Check for redirection
-        if isinstance(result, dict) and result.get("redirect"):
-            # Set gRPC metadata for client redirection
-            context.set_trailing_metadata((
-                ('leader_host', result['leader_host']),
-                ('leader_port', str(result['leader_port'])),
-                ('leader_id', result['leader_id']),
-                ('redirect', 'true')
-            ))
-            return message_service_pb2.StatusResponse(
-                success=False,
-                message="Operation redirected to leader"
-            )
-            
-        # Check for error
-        if isinstance(result, dict) and result.get("error"):
-            return message_service_pb2.StatusResponse(
-                success=False,
-                message=result.get("message", "Unknown error")
-            )
-            
-        # Store message in database and get timestamp
-        timestamp = db.queue_message(sender, recipient, content)
-        
-        # Create message data for streaming
+        # Immediate ephemeral delivery if recipient is active
         message_data = message_service_pb2.MessageResponse(
             sender=sender,
             content=content,
             timestamp=timestamp
         )
+        with self.user_lock:
+            if recipient in self.active_users:
+                self.message_queues[recipient].append(message_data)
         
-        # If the recipient is actively streaming, deliver immediately
-        if recipient in self.active_users:
-            self.message_queues[recipient].append(message_data)
-            
-            # Also update the user cache if present
-            with self.cache_lock:
-                if recipient in self.user_cache:
-                    full_message = f"From {sender} at {timestamp}: {content}"
-                    self.user_cache[recipient].add_read_message(full_message)
-                    
-            return message_service_pb2.StatusResponse(
-                success=True,
-                message="Message sent for immediate delivery"
-            )
-        else:
-            # Otherwise it's already queued in the database
-            return message_service_pb2.StatusResponse(
-                success=True,
-                message="Message queued for later delivery"
-            )
-            
+        return message_service_pb2.StatusResponse(
+            success=True,
+            message="Message sent"
+        )
+    
     def ViewMessages(self, request, context):
-        """Retrieve undelivered messages for a user"""
+        """
+        Retrieve undelivered (unread) messages for a user (READ + marks read).
+        Marking messages as read is effectively a WRITE operation.
+        For strong consistency, only allow on primary -> replicate to backups.
+        """
         username = request.username
         count = request.count
+        logger.info(f"ViewMessages request from {username} for {count} messages")
         
-        logger.info(f"View messages request from {username} for {count} messages")
+        # If you want to allow reading from backups (with eventual consistency), remove the check below.
+        # But if you want consistent "mark as read," keep it on primary only:
+        if not self._is_primary():
+            return message_service_pb2.ViewMessagesResponse(
+                success=False,
+                message="Not primary. Please use the primary to mark messages as read."
+            )
         
-        db = self.replica_manager.db
-        
-        # Check if user exists
-        if not db.user_exists(username):
+        if not self.db.user_exists(username):
             return message_service_pb2.ViewMessagesResponse(
                 success=False,
                 message="User not found"
             )
-            
-        # Forward operation to leader if we're not the leader
-        result = self.replica_manager.handle_client_operation(
-            "mark_messages_read",
-            username=username,
-            count=count
-        )
         
-        # Check for redirection
-        if isinstance(result, dict) and result.get("redirect"):
-            # Set gRPC metadata for client redirection
-            context.set_trailing_metadata((
-                ('leader_host', result['leader_host']),
-                ('leader_port', str(result['leader_port'])),
-                ('leader_id', result['leader_id']),
-                ('redirect', 'true')
-            ))
-            return message_service_pb2.ViewMessagesResponse(
-                success=False,
-                message="Operation redirected to leader"
-            )
-            
-        # Get unread messages from database
-        unread_messages = db.get_unread_messages(username, count)
-        
+        # Mark them as read in local DB
+        unread_messages = self.db.get_unread_messages(username, count)
         if not unread_messages:
             return message_service_pb2.ViewMessagesResponse(
                 success=False,
                 message="No undelivered messages"
             )
-            
-        # Convert to message data objects
+        
+        # Convert to proto objects
         message_data_list = []
         for msg in unread_messages:
             message_data_list.append(message_service_pb2.MessageData(
@@ -440,118 +383,111 @@ class ReplicatedChatServiceServicer(message_service_pb2_grpc.ChatServiceServicer
                 content=msg['content'],
                 timestamp=msg['timestamp']
             ))
-            
-        # Update user cache
+        
+        # Invalidate cache so next time user reloads
         self.invalidate_cache(username)
-            
+        
+        # Replicate the "mark as read" operation
+        self.pb_manager.push_update_to_backups(
+            update_type="view_messages",
+            parameters={
+                "username": username,
+                "count": str(count)
+            }
+        )
+        
         return message_service_pb2.ViewMessagesResponse(
             success=True,
             messages=message_data_list,
             message=f"{len(message_data_list)} messages delivered"
         )
-        
+    
     def DeleteMessages(self, request, context):
-        """Delete messages from a user's read messages"""
+        """
+        Delete read messages from a user's mailbox (WRITE).
+        Only on primary; replicate to backups.
+        """
         username = request.username
         delete_info = request.delete_info
+        logger.info(f"DeleteMessages request from {username} with info: {delete_info}")
         
-        logger.info(f"Delete messages request from {username} with info: {delete_info}")
+        if not self._is_primary():
+            return message_service_pb2.StatusResponse(
+                success=False,
+                message="Not primary. Please use the primary for writes."
+            )
         
-        db = self.replica_manager.db
-        
-        # Check if user exists
-        if not db.user_exists(username):
+        if not self.db.user_exists(username):
             return message_service_pb2.StatusResponse(
                 success=False,
                 message="User not found"
             )
-            
-        # Forward operation to leader if we're not the leader
-        result = self.replica_manager.handle_client_operation(
-            "delete_messages",
-            username=username,
-            delete_info=delete_info
-        )
         
-        # Check for redirection
-        if isinstance(result, dict) and result.get("redirect"):
-            # Set gRPC metadata for client redirection
-            context.set_trailing_metadata((
-                ('leader_host', result['leader_host']),
-                ('leader_port', str(result['leader_port'])),
-                ('leader_id', result['leader_id']),
-                ('redirect', 'true')
-            ))
-            return message_service_pb2.StatusResponse(
-                success=False,
-                message="Operation redirected to leader"
-            )
-            
-        # Delete messages
-        deleted_count = db.delete_read_messages(username, delete_info)
-        
-        # Update user cache
+        deleted_count = self.db.delete_read_messages(username, delete_info)
         self.invalidate_cache(username)
+        
+        # Replicate
+        self.pb_manager.push_update_to_backups(
+            update_type="delete_messages",
+            parameters={
+                "username": username,
+                "delete_info": delete_info
+            }
+        )
         
         if deleted_count == 0:
             return message_service_pb2.StatusResponse(
                 success=False,
                 message="No messages deleted"
             )
-            
+        
         return message_service_pb2.StatusResponse(
             success=True,
             message=f"Deleted {deleted_count} messages"
         )
-        
+    
     def ReceiveMessages(self, request, context):
-        """Stream real-time messages to the client"""
+        """
+        Stream real-time messages to the client (READ).
+        Can be served by any replica if data is replicated.
+        """
         username = request.username
-        
         logger.info(f"Starting message stream for {username}")
         
-        db = self.replica_manager.db
-        
-        # Verify user exists
-        if not db.user_exists(username):
+        if not self.db.user_exists(username):
             context.abort(grpc.StatusCode.NOT_FOUND, "User not found")
             return
-            
-        # Mark user as active and store the context for cancellation
+        
+        # Mark user as active
         with self.user_lock:
             self.active_users[username] = context
-            
-            # Ensure message queue exists
             if username not in self.message_queues:
                 self.message_queues[username] = []
         
         try:
-            # First deliver any unread messages from database
-            unread_messages = db.get_unread_messages(username, 100)
+            # First deliver any unread messages from DB
+            unread_messages = self.db.get_unread_messages(username, 100)
             for msg in unread_messages:
                 yield message_service_pb2.MessageResponse(
                     sender=msg['sender'],
                     content=msg['content'],
                     timestamp=msg['timestamp']
                 )
-                
-            # Keep streaming until client disconnects
+            
+            # Then keep streaming ephemeral queue
             while context.is_active():
-                # Check for new messages in the queue
-                if username in self.message_queues and self.message_queues[username]:
-                    with self.user_lock:
-                        message_queue = self.message_queues[username]
-                        if message_queue:
-                            for message in message_queue:
-                                yield message
-                            # Clear the queue after sending
-                            self.message_queues[username] = []
-                            
-                # Sleep to prevent CPU spinning
-                time.sleep(0.1)
+                with self.user_lock:
+                    if self.message_queues[username]:
+                        queue_copy = list(self.message_queues[username])
+                        self.message_queues[username].clear()
                     
+                for message in queue_copy:
+                    yield message
+                
+                time.sleep(0.1)
+        
         finally:
-            # Clean up when stream ends
+            # Clean up on disconnect
             with self.user_lock:
                 if username in self.active_users:
                     del self.active_users[username]
