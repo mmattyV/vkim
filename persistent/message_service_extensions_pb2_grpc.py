@@ -35,21 +35,6 @@ class ReplicationServiceStub(object):
         Args:
             channel: A grpc.Channel.
         """
-        self.RequestVote = channel.unary_unary(
-                '/chat.ReplicationService/RequestVote',
-                request_serializer=message__service__extensions__pb2.VoteRequest.SerializeToString,
-                response_deserializer=message__service__extensions__pb2.VoteResponse.FromString,
-                _registered_method=True)
-        self.SendHeartbeat = channel.unary_unary(
-                '/chat.ReplicationService/SendHeartbeat',
-                request_serializer=message__service__extensions__pb2.HeartbeatRequest.SerializeToString,
-                response_deserializer=message__service__extensions__pb2.HeartbeatResponse.FromString,
-                _registered_method=True)
-        self.TransferLeadership = channel.unary_unary(
-                '/chat.ReplicationService/TransferLeadership',
-                request_serializer=message__service__extensions__pb2.LeaderTransferRequest.SerializeToString,
-                response_deserializer=message__service__pb2.StatusResponse.FromString,
-                _registered_method=True)
         self.SyncOperations = channel.unary_unary(
                 '/chat.ReplicationService/SyncOperations',
                 request_serializer=message__service__extensions__pb2.SyncRequest.SerializeToString,
@@ -75,32 +60,18 @@ class ReplicationServiceStub(object):
                 request_serializer=message__service__extensions__pb2.ClusterInfoRequest.SerializeToString,
                 response_deserializer=message__service__extensions__pb2.ClusterInfoResponse.FromString,
                 _registered_method=True)
+        self.PushUpdate = channel.unary_unary(
+                '/chat.ReplicationService/PushUpdate',
+                request_serializer=message__service__extensions__pb2.UpdateRequest.SerializeToString,
+                response_deserializer=message__service__pb2.StatusResponse.FromString,
+                _registered_method=True)
 
 
 class ReplicationServiceServicer(object):
     """Missing associated documentation comment in .proto file."""
 
-    def RequestVote(self, request, context):
-        """Leader election
-        """
-        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
-        context.set_details('Method not implemented!')
-        raise NotImplementedError('Method not implemented!')
-
-    def SendHeartbeat(self, request, context):
-        """Missing associated documentation comment in .proto file."""
-        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
-        context.set_details('Method not implemented!')
-        raise NotImplementedError('Method not implemented!')
-
-    def TransferLeadership(self, request, context):
-        """Missing associated documentation comment in .proto file."""
-        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
-        context.set_details('Method not implemented!')
-        raise NotImplementedError('Method not implemented!')
-
     def SyncOperations(self, request, context):
-        """State synchronization
+        """State synchronization (Raft-style)
         """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
@@ -131,24 +102,18 @@ class ReplicationServiceServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def PushUpdate(self, request, context):
+        """-------------------------------------------------------
+        Primary-Backup direct state update
+        -------------------------------------------------------
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
 
 def add_ReplicationServiceServicer_to_server(servicer, server):
     rpc_method_handlers = {
-            'RequestVote': grpc.unary_unary_rpc_method_handler(
-                    servicer.RequestVote,
-                    request_deserializer=message__service__extensions__pb2.VoteRequest.FromString,
-                    response_serializer=message__service__extensions__pb2.VoteResponse.SerializeToString,
-            ),
-            'SendHeartbeat': grpc.unary_unary_rpc_method_handler(
-                    servicer.SendHeartbeat,
-                    request_deserializer=message__service__extensions__pb2.HeartbeatRequest.FromString,
-                    response_serializer=message__service__extensions__pb2.HeartbeatResponse.SerializeToString,
-            ),
-            'TransferLeadership': grpc.unary_unary_rpc_method_handler(
-                    servicer.TransferLeadership,
-                    request_deserializer=message__service__extensions__pb2.LeaderTransferRequest.FromString,
-                    response_serializer=message__service__pb2.StatusResponse.SerializeToString,
-            ),
             'SyncOperations': grpc.unary_unary_rpc_method_handler(
                     servicer.SyncOperations,
                     request_deserializer=message__service__extensions__pb2.SyncRequest.FromString,
@@ -174,6 +139,11 @@ def add_ReplicationServiceServicer_to_server(servicer, server):
                     request_deserializer=message__service__extensions__pb2.ClusterInfoRequest.FromString,
                     response_serializer=message__service__extensions__pb2.ClusterInfoResponse.SerializeToString,
             ),
+            'PushUpdate': grpc.unary_unary_rpc_method_handler(
+                    servicer.PushUpdate,
+                    request_deserializer=message__service__extensions__pb2.UpdateRequest.FromString,
+                    response_serializer=message__service__pb2.StatusResponse.SerializeToString,
+            ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
             'chat.ReplicationService', rpc_method_handlers)
@@ -184,87 +154,6 @@ def add_ReplicationServiceServicer_to_server(servicer, server):
  # This class is part of an EXPERIMENTAL API.
 class ReplicationService(object):
     """Missing associated documentation comment in .proto file."""
-
-    @staticmethod
-    def RequestVote(request,
-            target,
-            options=(),
-            channel_credentials=None,
-            call_credentials=None,
-            insecure=False,
-            compression=None,
-            wait_for_ready=None,
-            timeout=None,
-            metadata=None):
-        return grpc.experimental.unary_unary(
-            request,
-            target,
-            '/chat.ReplicationService/RequestVote',
-            message__service__extensions__pb2.VoteRequest.SerializeToString,
-            message__service__extensions__pb2.VoteResponse.FromString,
-            options,
-            channel_credentials,
-            insecure,
-            call_credentials,
-            compression,
-            wait_for_ready,
-            timeout,
-            metadata,
-            _registered_method=True)
-
-    @staticmethod
-    def SendHeartbeat(request,
-            target,
-            options=(),
-            channel_credentials=None,
-            call_credentials=None,
-            insecure=False,
-            compression=None,
-            wait_for_ready=None,
-            timeout=None,
-            metadata=None):
-        return grpc.experimental.unary_unary(
-            request,
-            target,
-            '/chat.ReplicationService/SendHeartbeat',
-            message__service__extensions__pb2.HeartbeatRequest.SerializeToString,
-            message__service__extensions__pb2.HeartbeatResponse.FromString,
-            options,
-            channel_credentials,
-            insecure,
-            call_credentials,
-            compression,
-            wait_for_ready,
-            timeout,
-            metadata,
-            _registered_method=True)
-
-    @staticmethod
-    def TransferLeadership(request,
-            target,
-            options=(),
-            channel_credentials=None,
-            call_credentials=None,
-            insecure=False,
-            compression=None,
-            wait_for_ready=None,
-            timeout=None,
-            metadata=None):
-        return grpc.experimental.unary_unary(
-            request,
-            target,
-            '/chat.ReplicationService/TransferLeadership',
-            message__service__extensions__pb2.LeaderTransferRequest.SerializeToString,
-            message__service__pb2.StatusResponse.FromString,
-            options,
-            channel_credentials,
-            insecure,
-            call_credentials,
-            compression,
-            wait_for_ready,
-            timeout,
-            metadata,
-            _registered_method=True)
 
     @staticmethod
     def SyncOperations(request,
@@ -391,6 +280,33 @@ class ReplicationService(object):
             '/chat.ReplicationService/GetClusterInfo',
             message__service__extensions__pb2.ClusterInfoRequest.SerializeToString,
             message__service__extensions__pb2.ClusterInfoResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def PushUpdate(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/chat.ReplicationService/PushUpdate',
+            message__service__extensions__pb2.UpdateRequest.SerializeToString,
+            message__service__pb2.StatusResponse.FromString,
             options,
             channel_credentials,
             insecure,
