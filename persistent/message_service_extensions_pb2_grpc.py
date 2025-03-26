@@ -6,7 +6,7 @@ import warnings
 import message_service_extensions_pb2 as message__service__extensions__pb2
 import message_service_pb2 as message__service__pb2
 
-GRPC_GENERATED_VERSION = '1.71.0'
+GRPC_GENERATED_VERSION = '1.70.0'
 GRPC_VERSION = grpc.__version__
 _version_not_supported = False
 
