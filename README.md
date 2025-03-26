@@ -271,23 +271,24 @@ The system follows a client-server architecture with multiple server replicas to
    cd vkim/persistent_final
    ```
 
-2. Install dependencies:
+2. Activate virtual environment
+
+#### On Windows:
+   ```bash
+   python -m venv venv
+   venv\Scripts\activate
+   ```
+
+#### On macOS/Linux:
+   ```bash
+   python -m venv venv
+   source venv/bin/activate
+   ```
+
+3. Install dependencies:
    ```
    python setup.py
    ```
-3. Activate virtual environment
-
-#### On Windows:
-```bash
-python -m venv venv
-venv\Scripts\activate
-```
-
-#### On macOS/Linux:
-```bash
-python -m venv venv
-source venv/bin/activate
-```
 
 ---
 
