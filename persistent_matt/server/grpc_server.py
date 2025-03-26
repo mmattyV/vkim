@@ -55,6 +55,11 @@ class ChatServiceServicer(message_service_pb2_grpc.ChatServiceServicer):
         threading.Thread(target=self.run_leader_election_loop, daemon=True).start()
         
         print(f"Chat Service initialized on {self.my_address} with persistence, replication, and leader election.")
+
+        # If the persistent state indicates that this node is outdated, or if a leader is known and this node is not it,
+        # call resync_state. For demo, you could force a resync if not leader:
+        if not self.is_leader:
+            self.resync_state()
     
     def persist_state(self):
         """Persist state by converting non-pickleable objects to basic types."""
@@ -81,6 +86,34 @@ class ChatServiceServicer(message_service_pb2_grpc.ChatServiceServicer):
                 channel.close()
             except Exception as e:
                 print(f"Replication to {addr} failed: {e}")
+
+    def resync_state(self):
+        """
+        Called by a node (when not the leader) to synchronize its state from the current leader.
+        """
+        try:
+            channel = grpc.insecure_channel(self.current_leader)
+            stub = message_service_pb2_grpc.ChatServiceStub(channel)
+            req = message_service_pb2.SyncStateRequest()
+            resp = stub.SyncState(req, timeout=5)
+            channel.close()
+            if resp and resp.state_json:
+                new_state = json.loads(resp.state_json)
+                with self.user_lock:
+                    self.users = new_state.get("users", {})
+                    mq_data = new_state.get("message_queues", {})
+                    self.message_queues = {}
+                    for username, messages in mq_data.items():
+                        q = Queue()
+                        for msg in messages:
+                            q.put(msg)
+                        self.message_queues[username] = q
+                    self.replication_log = set(new_state.get("replication_log", []))
+                print("State synchronized with leader.")
+            else:
+                print("No state received from leader.")
+        except Exception as e:
+            print(f"Failed to resync state: {e}")
     
     # --- Leader Election and Heartbeat RPCs ---
     
@@ -352,7 +385,21 @@ class ChatServiceServicer(message_service_pb2_grpc.ChatServiceServicer):
         )
     
     # --- Other RPCs ---
-    
+
+    def SyncState(self, request, context):
+        """Return the current state as a JSON string."""
+        with self.user_lock:
+            # Convert message_queues (Queue objects) to lists.
+            mq = {username: list(q.queue) for username, q in self.message_queues.items()}
+            # Note: If your User objects are not directly serializable, you may need to convert them to dictionaries.
+            state = {
+                "users": self.users,  
+                "message_queues": mq,
+                "replication_log": list(self.replication_log)
+            }
+        state_json = json.dumps(state)
+        return message_service_pb2.SyncStateResponse(state_json=state_json)
+
     def CheckUsername(self, request, context):
         print(f"Checking username: {request.username}")
         with self.user_lock:
@@ -397,7 +444,11 @@ class ChatServiceServicer(message_service_pb2_grpc.ChatServiceServicer):
                     success=False,
                     message="No undelivered messages"
                 )
+            # Retrieve messages (this modifies the user's queues)
             messages_list = user.get_current_messages(count)
+            # Persist the updated state (messages have been moved from undelivered to read)
+            self.persist_state()
+
             message_data_list = []
             for msg in messages_list:
                 if msg.startswith("From "):

@@ -81,14 +81,14 @@ message MessageResponse {
 
 message DeleteMessagesRequest {
   string username = 1;
-  string delete_info = 2; // "ALL" or a number as string
+  string delete_info = 2; // "ALL" or number as string
 }
 
-// Replication message
+// Replication messages
 message ReplicationRequest {
-  string operation = 1;     // e.g., "CreateAccount", "SendMessage", "DeleteMessages"
-  string data = 2;          // JSON-encoded update details
-  string update_id = 3;     // Unique update identifier
+  string operation = 1;    // e.g., "CreateAccount", "SendMessage", "DeleteMessages"
+  string data = 2;         // JSON-encoded update details
+  string update_id = 3;    // Unique update identifier
 }
 
 // Leader election / heartbeat messages
@@ -109,28 +109,40 @@ message LeaderResponse {
   string leader_address = 1;
 }
 
+// SyncState messages for state resynchronization
+message SyncStateRequest {
+  // Optionally, include a version field.
+}
+
+message SyncStateResponse {
+  string state_json = 1;  // The complete state serialized as JSON.
+}
+
 // Service definition
 service ChatService {
-  // Account management
+  // Account management RPCs
   rpc CheckUsername(UsernameRequest) returns (UsernameResponse);
   rpc CreateAccount(CreateAccountRequest) returns (AuthResponse);
   rpc Login(LoginRequest) returns (AuthResponse);
   rpc Logout(LogoutRequest) returns (StatusResponse);
   rpc DeleteAccount(UsernameRequest) returns (StatusResponse);
   
-  // Messaging operations
+  // Messaging RPCs
   rpc ListAccounts(ListAccountsRequest) returns (ListAccountsResponse);
   rpc SendMessage(SendMessageRequest) returns (StatusResponse);
   rpc ViewMessages(ViewMessagesRequest) returns (ViewMessagesResponse);
   rpc DeleteMessages(DeleteMessagesRequest) returns (StatusResponse);
   
-  // Streaming for real-time message delivery
+  // Real-time streaming RPC
   rpc ReceiveMessages(UsernameRequest) returns (stream MessageResponse);
   
   // Replication RPC
   rpc ReplicateOperation(ReplicationRequest) returns (StatusResponse);
   
-  // Leader election and heartbeat RPCs
+  // Leader election / heartbeat RPCs
   rpc Ping(PingRequest) returns (PingResponse);
   rpc GetLeader(LeaderRequest) returns (LeaderResponse);
+  
+  // State synchronization RPC (new)
+  rpc SyncState(SyncStateRequest) returns (SyncStateResponse);
 }

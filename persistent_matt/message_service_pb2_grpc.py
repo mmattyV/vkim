@@ -100,6 +100,11 @@ class ChatServiceStub(object):
                 request_serializer=message__service__pb2.LeaderRequest.SerializeToString,
                 response_deserializer=message__service__pb2.LeaderResponse.FromString,
                 _registered_method=True)
+        self.SyncState = channel.unary_unary(
+                '/chat.ChatService/SyncState',
+                request_serializer=message__service__pb2.SyncStateRequest.SerializeToString,
+                response_deserializer=message__service__pb2.SyncStateResponse.FromString,
+                _registered_method=True)
 
 
 class ChatServiceServicer(object):
@@ -107,7 +112,7 @@ class ChatServiceServicer(object):
     """
 
     def CheckUsername(self, request, context):
-        """Account management
+        """Account management RPCs
         """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
@@ -138,7 +143,7 @@ class ChatServiceServicer(object):
         raise NotImplementedError('Method not implemented!')
 
     def ListAccounts(self, request, context):
-        """Messaging operations
+        """Messaging RPCs
         """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
@@ -163,7 +168,7 @@ class ChatServiceServicer(object):
         raise NotImplementedError('Method not implemented!')
 
     def ReceiveMessages(self, request, context):
-        """Streaming for real-time message delivery
+        """Real-time streaming RPC
         """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
@@ -177,7 +182,7 @@ class ChatServiceServicer(object):
         raise NotImplementedError('Method not implemented!')
 
     def Ping(self, request, context):
-        """Leader election and heartbeat RPCs
+        """Leader election / heartbeat RPCs
         """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
@@ -185,6 +190,13 @@ class ChatServiceServicer(object):
 
     def GetLeader(self, request, context):
         """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def SyncState(self, request, context):
+        """State synchronization RPC for node restart
+        """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
@@ -256,6 +268,11 @@ def add_ChatServiceServicer_to_server(servicer, server):
                     servicer.GetLeader,
                     request_deserializer=message__service__pb2.LeaderRequest.FromString,
                     response_serializer=message__service__pb2.LeaderResponse.SerializeToString,
+            ),
+            'SyncState': grpc.unary_unary_rpc_method_handler(
+                    servicer.SyncState,
+                    request_deserializer=message__service__pb2.SyncStateRequest.FromString,
+                    response_serializer=message__service__pb2.SyncStateResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -610,6 +627,33 @@ class ChatService(object):
             '/chat.ChatService/GetLeader',
             message__service__pb2.LeaderRequest.SerializeToString,
             message__service__pb2.LeaderResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def SyncState(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/chat.ChatService/SyncState',
+            message__service__pb2.SyncStateRequest.SerializeToString,
+            message__service__pb2.SyncStateResponse.FromString,
             options,
             channel_credentials,
             insecure,

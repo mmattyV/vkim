@@ -48,7 +48,7 @@ class ChatClient:
 
     def discover_leader(self):
         """
-        Iterate over known replica addresses (if provided). If provided, use them exclusively.
+        Iterate over known replica addresses plus the fallback address.
         Returns the first discovered leader address.
         """
         if self.replica_addresses:
@@ -66,7 +66,6 @@ class ChatClient:
                     logging.info(f"Discovered leader {resp.leader_address} from {addr}")
                     return resp.leader_address
             except Exception as e:
-                # Log at DEBUG level so these warnings are suppressed
                 logging.debug(f"Leader discovery failed on {addr}: {e}")
         return None
 
