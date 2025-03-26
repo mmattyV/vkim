@@ -5,6 +5,8 @@ import time
 import sys
 import os
 import argparse
+import logging
+logging.basicConfig(level=logging.WARNING)
 
 # Add parent directory to path so that common modules are accessible
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
@@ -46,7 +48,7 @@ class ChatClient:
 
     def discover_leader(self):
         """
-        Iterate over known replica addresses. If provided, use them exclusively.
+        Iterate over known replica addresses (if provided). If provided, use them exclusively.
         Returns the first discovered leader address.
         """
         if self.replica_addresses:
@@ -61,10 +63,11 @@ class ChatClient:
                 resp = stub.GetLeader(req, timeout=2)
                 channel.close()
                 if resp and resp.leader_address:
-                    print(f"Discovered leader {resp.leader_address} from {addr}")
+                    logging.info(f"Discovered leader {resp.leader_address} from {addr}")
                     return resp.leader_address
             except Exception as e:
-                print(f"Leader discovery failed on {addr}: {e}")
+                # Log at DEBUG level so these warnings are suppressed
+                logging.debug(f"Leader discovery failed on {addr}: {e}")
         return None
 
     def safe_rpc_call(self, func, *args, **kwargs):
