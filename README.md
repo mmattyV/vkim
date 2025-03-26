@@ -275,7 +275,7 @@ The system follows a client-server architecture with multiple server replicas to
    ```
    python setup.py
    ```
-## Create and Activate the Virtual Environment
+3. Activate virtual environment
 
 #### On Windows:
 ```bash
