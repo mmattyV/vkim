@@ -9,7 +9,7 @@ import logging
 import grpc
 from concurrent import futures
 
-# Adjust the path if needed
+# Adjust the path as needed so that common modules are accessible
 # sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from common.user import User
@@ -22,6 +22,8 @@ logger = logging.getLogger(__name__)
 class ReplicatedChatServiceServicer(message_service_pb2_grpc.ChatServiceServicer):
     """
     Simplified Chat Service that uses a Primary–Backup manager instead of Raft.
+    Write operations (create account, send message, etc.) are only allowed on the primary.
+    After a local write, the primary pushes the update to each backup.
     """
     def __init__(self, db, pb_manager):
         """
@@ -49,26 +51,20 @@ class ReplicatedChatServiceServicer(message_service_pb2_grpc.ChatServiceServicer
     # ----------------------------------------------------------------------
     
     def get_user(self, username):
-        """
-        Retrieve or create a User object in an in-memory cache.
-        Loads unread messages from the database if necessary.
-        """
         with self.cache_lock:
             if username not in self.user_cache:
-                # Check if user exists in DB
                 if self.db.user_exists(username):
                     user = User(username)
-                    
-                    # Load unread messages
-                    unread_messages = self.db.get_unread_messages(username, 1000)
+                    # Use the no-mark version so messages remain unread in the DB
+                    unread_messages = self.db.get_unread_messages_no_mark(username, 1000)
                     for msg in unread_messages:
                         formatted_msg = f"From {msg['sender']} at {msg['timestamp']}: {msg['content']}"
                         user.queue_message(formatted_msg)
-                    
                     self.user_cache[username] = user
                 else:
                     return None
             return self.user_cache[username]
+
     
     def invalidate_cache(self, username=None):
         """
@@ -88,16 +84,14 @@ class ReplicatedChatServiceServicer(message_service_pb2_grpc.ChatServiceServicer
     
     def _reject_non_primary(self, context):
         """
-        Helper to return an error response if this replica is not the primary.
-        You could also set trailing metadata with the known primary host/port.
+        Return an error response if this replica is not the primary.
+        Optionally, set trailing metadata to inform the client.
         """
-        # Optional: set metadata to inform the client about the primary
-        # context.set_trailing_metadata((
+        # Optionally: context.set_trailing_metadata((
         #     ('primary_host', self.pb_manager.primary_host or ""),
         #     ('primary_port', str(self.pb_manager.primary_port or 0)),
         #     ('redirect', 'true')
         # ))
-        
         return message_service_pb2.StatusResponse(
             success=False,
             message="This replica is not the primary. Please contact the primary for write operations."
@@ -113,7 +107,6 @@ class ReplicatedChatServiceServicer(message_service_pb2_grpc.ChatServiceServicer
         This can be served by any replica.
         """
         logger.info(f"Checking username: {request.username}")
-        
         exists = self.db.user_exists(request.username)
         return message_service_pb2.UsernameResponse(
             exists=exists,
@@ -123,7 +116,7 @@ class ReplicatedChatServiceServicer(message_service_pb2_grpc.ChatServiceServicer
     def CreateAccount(self, request, context):
         """
         Create a new user account (WRITE).
-        Only allowed on primary. Then replicate to backups.
+        Only allowed on the primary; then replicate to backups.
         """
         username = request.username
         hashed_password = request.hashed_password
@@ -131,7 +124,6 @@ class ReplicatedChatServiceServicer(message_service_pb2_grpc.ChatServiceServicer
         
         # 1. Ensure we are primary
         if not self._is_primary():
-            # Return an AuthResponse to match the method signature
             return message_service_pb2.AuthResponse(
                 success=False,
                 message="Not primary. Please use the primary for writes."
@@ -168,7 +160,7 @@ class ReplicatedChatServiceServicer(message_service_pb2_grpc.ChatServiceServicer
     def Login(self, request, context):
         """
         Log in a user (READ + ephemeral session).
-        Allowed on any replica if we want to support read on backups.
+        Allowed on any replica.
         """
         username = request.username
         hashed_password = request.hashed_password
@@ -223,7 +215,7 @@ class ReplicatedChatServiceServicer(message_service_pb2_grpc.ChatServiceServicer
     def DeleteAccount(self, request, context):
         """
         Delete a user account (WRITE).
-        Only on primary; replicate to backups.
+        Only allowed on primary; replicate to backups.
         """
         username = request.username
         logger.info(f"DeleteAccount request for: {username}")
@@ -245,7 +237,7 @@ class ReplicatedChatServiceServicer(message_service_pb2_grpc.ChatServiceServicer
         if not success:
             return message_service_pb2.StatusResponse(success=False, message=msg)
         
-        # Cleanup ephemeral
+        # Cleanup ephemeral state
         with self.user_lock:
             self.active_users.pop(username, None)
             self.message_queues.pop(username, None)
@@ -290,7 +282,7 @@ class ReplicatedChatServiceServicer(message_service_pb2_grpc.ChatServiceServicer
     def SendMessage(self, request, context):
         """
         Send a message from one user to another (WRITE).
-        Only on primary; replicate to backups.
+        Only allowed on primary; replicate to backups.
         """
         sender = request.sender
         recipient = request.recipient
@@ -303,7 +295,7 @@ class ReplicatedChatServiceServicer(message_service_pb2_grpc.ChatServiceServicer
                 message="Not primary. Please use the primary for writes."
             )
         
-        # Verify existence
+        # Verify user existence
         if not self.db.user_exists(sender):
             return message_service_pb2.StatusResponse(
                 success=False,
@@ -318,7 +310,7 @@ class ReplicatedChatServiceServicer(message_service_pb2_grpc.ChatServiceServicer
         # Queue message locally
         timestamp = self.db.queue_message(sender, recipient, content)
         
-        # Push to backups
+        # Replicate to backups
         self.pb_manager.push_update_to_backups(
             update_type="queue_message",
             parameters={
@@ -328,7 +320,7 @@ class ReplicatedChatServiceServicer(message_service_pb2_grpc.ChatServiceServicer
             }
         )
         
-        # Immediate ephemeral delivery if recipient is active
+        # Ephemeral immediate delivery if recipient is active
         message_data = message_service_pb2.MessageResponse(
             sender=sender,
             content=content,
@@ -345,21 +337,12 @@ class ReplicatedChatServiceServicer(message_service_pb2_grpc.ChatServiceServicer
     
     def ViewMessages(self, request, context):
         """
-        Retrieve undelivered (unread) messages for a user (READ + marks read).
-        Marking messages as read is effectively a WRITE operation.
-        For strong consistency, only allow on primary -> replicate to backups.
+        Retrieve undelivered (unread) messages for a user and then mark them as read.
+        This RPC is invoked when the user presses the "View Messages" button.
         """
         username = request.username
         count = request.count
         logger.info(f"ViewMessages request from {username} for {count} messages")
-        
-        # If you want to allow reading from backups (with eventual consistency), remove the check below.
-        # But if you want consistent "mark as read," keep it on primary only:
-        if not self._is_primary():
-            return message_service_pb2.ViewMessagesResponse(
-                success=False,
-                message="Not primary. Please use the primary to mark messages as read."
-            )
         
         if not self.db.user_exists(username):
             return message_service_pb2.ViewMessagesResponse(
@@ -367,32 +350,33 @@ class ReplicatedChatServiceServicer(message_service_pb2_grpc.ChatServiceServicer
                 message="User not found"
             )
         
-        # Mark them as read in local DB
-        unread_messages = self.db.get_unread_messages(username, count)
+        # Retrieve unread messages WITHOUT marking them as read.
+        unread_messages = self.db.get_unread_messages_no_mark(username, count)
         if not unread_messages:
             return message_service_pb2.ViewMessagesResponse(
                 success=False,
                 message="No undelivered messages"
             )
         
-        # Convert to proto objects
         message_data_list = []
+        message_ids = []
         for msg in unread_messages:
             message_data_list.append(message_service_pb2.MessageData(
                 sender=msg['sender'],
                 content=msg['content'],
                 timestamp=msg['timestamp']
             ))
+            message_ids.append(msg['id'])
         
-        # Invalidate cache so next time user reloads
-        self.invalidate_cache(username)
+        # Mark messages as read in the primary's DB.
+        self.db.mark_messages_as_read(message_ids)
         
-        # Replicate the "mark as read" operation
+        # Replicate this "mark as read" operation to backups.
         self.pb_manager.push_update_to_backups(
-            update_type="view_messages",
+            update_type="mark_messages_read",
             parameters={
                 "username": username,
-                "count": str(count)
+                "message_ids": json.dumps(message_ids)
             }
         )
         
@@ -401,11 +385,12 @@ class ReplicatedChatServiceServicer(message_service_pb2_grpc.ChatServiceServicer
             messages=message_data_list,
             message=f"{len(message_data_list)} messages delivered"
         )
+
     
     def DeleteMessages(self, request, context):
         """
         Delete read messages from a user's mailbox (WRITE).
-        Only on primary; replicate to backups.
+        Only allowed on primary; replicate to backups.
         """
         username = request.username
         delete_info = request.delete_info
@@ -426,7 +411,7 @@ class ReplicatedChatServiceServicer(message_service_pb2_grpc.ChatServiceServicer
         deleted_count = self.db.delete_read_messages(username, delete_info)
         self.invalidate_cache(username)
         
-        # Replicate
+        # Replicate delete operation to backups
         self.pb_manager.push_update_to_backups(
             update_type="delete_messages",
             parameters={
@@ -448,8 +433,9 @@ class ReplicatedChatServiceServicer(message_service_pb2_grpc.ChatServiceServicer
     
     def ReceiveMessages(self, request, context):
         """
-        Stream real-time messages to the client (READ).
-        Can be served by any replica if data is replicated.
+        Stream real-time messages to the client.
+        Unlike before, do not deliver backlog messages automatically.
+        The client must explicitly press "View Messages" to fetch backlog.
         """
         username = request.username
         logger.info(f"Starting message stream for {username}")
@@ -458,36 +444,26 @@ class ReplicatedChatServiceServicer(message_service_pb2_grpc.ChatServiceServicer
             context.abort(grpc.StatusCode.NOT_FOUND, "User not found")
             return
         
-        # Mark user as active
+        # Mark user as active and ensure a message queue exists.
         with self.user_lock:
             self.active_users[username] = context
             if username not in self.message_queues:
                 self.message_queues[username] = []
         
         try:
-            # First deliver any unread messages from DB
-            unread_messages = self.db.get_unread_messages(username, 100)
-            for msg in unread_messages:
-                yield message_service_pb2.MessageResponse(
-                    sender=msg['sender'],
-                    content=msg['content'],
-                    timestamp=msg['timestamp']
-                )
-            
-            # Then keep streaming ephemeral queue
+            # Do not fetch backlog from DB here.
+            # Only continuously stream messages from the ephemeral queue.
             while context.is_active():
+                queue_copy = []
                 with self.user_lock:
-                    if self.message_queues[username]:
+                    # Guard against missing key
+                    if username in self.message_queues and self.message_queues[username]:
                         queue_copy = list(self.message_queues[username])
                         self.message_queues[username].clear()
-                    
                 for message in queue_copy:
                     yield message
-                
                 time.sleep(0.1)
-        
         finally:
-            # Clean up on disconnect
             with self.user_lock:
                 if username in self.active_users:
                     del self.active_users[username]

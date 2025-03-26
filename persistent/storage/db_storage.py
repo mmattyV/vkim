@@ -315,3 +315,39 @@ class ChatDatabase:
             )
             result = cursor.fetchone()
             return result['value'] if result else default
+    
+    def get_unread_messages_no_mark(self, username, count):
+        """Retrieve unread messages without marking them as read."""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                '''SELECT id, sender, content, timestamp 
+                FROM messages 
+                WHERE recipient = ? AND read = 0
+                ORDER BY timestamp ASC
+                LIMIT ?''',
+                (username, count)
+            )
+            messages = [dict(row) for row in cursor.fetchall()]
+            return messages
+
+    def mark_messages_as_read(self, message_ids):
+        """Mark the messages with the given IDs as read."""
+        if not message_ids:
+            return
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            placeholders = ','.join('?' for _ in message_ids)
+            cursor.execute(
+                f'UPDATE messages SET read = 1 WHERE id IN ({placeholders})',
+                message_ids
+            )
+            conn.commit()
+
+    def force_delete_user(self, username):
+        """Force delete a user and all their messages without checking unread status."""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('DELETE FROM messages WHERE sender = ? OR recipient = ?', (username, username))
+            cursor.execute('DELETE FROM users WHERE username = ?', (username,))
+            conn.commit()

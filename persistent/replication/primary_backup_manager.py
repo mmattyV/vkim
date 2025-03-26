@@ -4,10 +4,12 @@ import time
 import threading
 import logging
 import grpc
+import json
 from concurrent import futures
 
 import message_service_extensions_pb2
 import message_service_extensions_pb2_grpc
+import message_service_pb2  # Import the module that defines StatusResponse
 
 logger = logging.getLogger(__name__)
 
@@ -23,35 +25,39 @@ class PrimaryBackupManager(message_service_extensions_pb2_grpc.ReplicationServic
     """
     def __init__(self, db, replica_id, host, port, known_replicas, is_primary=False):
         """
-        :param db: Reference to the ChatDatabase instance.
-        :param replica_id: Unique ID for this replica (e.g., "replica1").
-        :param host: Host/IP to bind the replication gRPC server to.
-        :param port: Port to bind the replication gRPC server to.
+        :param db: ChatDatabase instance.
+        :param replica_id: Unique ID for this replica.
+        :param host: Host/IP for the replication gRPC server.
+        :param port: Port for the replication gRPC server.
         :param known_replicas: Dict of other replicas {replica_id: (host, port)}.
-        :param is_primary: Whether this replica starts as the primary.
+        :param is_primary: Boolean flag to set this replica as primary.
         """
         self.db = db
         self.replica_id = replica_id
         self.host = host
         self.port = port
         self.known_replicas = known_replicas or {}
-        
-        # Decide if this node starts as primary or backup
         self.role = Role.PRIMARY if is_primary else Role.BACKUP
-        
-        # If we are a backup, we’ll attempt to monitor the primary and promote ourselves if it fails
-        self.primary_id = None
-        self.primary_host = None
-        self.primary_port = None
-        
-        # Heartbeat/check intervals (only used if we are a backup)
-        self.primary_check_interval = 3.0
-        
-        # gRPC server for receiving updates or cluster info
+
+        if self.role == Role.BACKUP:
+            # Assume the primary is the first known replica
+            for rep_id, (r_host, r_port) in self.known_replicas.items():
+                self.primary_id = rep_id
+                self.primary_host = r_host
+                self.primary_port = r_port
+                break
+            else:
+                self.primary_id = None
+                self.primary_host = None
+                self.primary_port = None
+        else:
+            self.primary_id = self.replica_id
+            self.primary_host = self.host
+            self.primary_port = self.port
+
+        self.primary_check_interval = 3.0  # seconds
         self.server = None
         self.is_running = False
-        
-        # For the primary to push updates to backups
         self.stub_cache = {}
         
     def start(self):
@@ -106,27 +112,56 @@ class PrimaryBackupManager(message_service_extensions_pb2_grpc.ReplicationServic
     def _monitor_primary(self):
         """
         Background thread (for backups) that periodically checks if the primary is alive.
-        If the primary fails, promote ourselves to primary.
+        If the current primary fails, update primary info to the lowest candidate among known replicas.
+        Only the backup with the lowest replica_id will eventually promote itself.
         """
         while self.is_running and self.role == Role.BACKUP:
+            # If primary info is not set, try to select one from known_replicas.
             if not self.primary_id:
-                # Optionally attempt to discover or set a known primary
-                pass
-            else:
-                # Check if the primary is responding
-                try:
-                    channel = grpc.insecure_channel(f"{self.primary_host}:{self.primary_port}")
-                    stub = message_service_extensions_pb2_grpc.ReplicationServiceStub(channel)
-                    request = message_service_extensions_pb2.ClusterInfoRequest(replica_id=self.replica_id)
-                    # A small timeout so we don’t block forever
-                    stub.GetClusterInfo(request, timeout=2)
-                    
-                except Exception as e:
-                    logger.warning(f"Primary {self.primary_id} not responding; promoting self to PRIMARY...")
-                    self.become_primary()
-                    break
-            
+                if self.known_replicas:
+                    candidate_id = min(self.known_replicas.keys())
+                    self.primary_id = candidate_id
+                    self.primary_host, self.primary_port = self.known_replicas[candidate_id]
+                    logger.info(f"Primary info set to {self.primary_id} from known replicas.")
+                else:
+                    time.sleep(self.primary_check_interval)
+                    continue
+
+            try:
+                # Try to ping the current primary.
+                channel = grpc.insecure_channel(f"{self.primary_host}:{self.primary_port}")
+                stub = message_service_extensions_pb2_grpc.ReplicationServiceStub(channel)
+                request = message_service_extensions_pb2.ClusterInfoRequest(replica_id=self.replica_id)
+                response = stub.GetClusterInfo(request, timeout=2)
+                # If the ping succeeds and the response contains a leader_id, update our primary info.
+                if response.leader_id and response.leader_id != self.primary_id:
+                    if response.leader_id in self.known_replicas:
+                        self.primary_id = response.leader_id
+                        self.primary_host, self.primary_port = self.known_replicas[response.leader_id]
+                        logger.info(f"Updated primary info to {self.primary_id} based on response.")
+                # If we got a response, the primary is alive—sleep and continue.
+            except Exception as e:
+                logger.warning(f"Primary {self.primary_id} not responding; removing it from known replicas.")
+                # Remove the unresponsive primary.
+                if self.primary_id in self.known_replicas:
+                    del self.known_replicas[self.primary_id]
+                # Now, if there are any known replicas, select the new candidate.
+                if self.known_replicas:
+                    candidate_ids = list(self.known_replicas.keys()) + [self.replica_id]
+                    lowest_candidate = min(candidate_ids)
+                    if self.replica_id == lowest_candidate:
+                        logger.warning(f"My replica_id {self.replica_id} is lowest among candidates; promoting self to PRIMARY...")
+                        self.become_primary()
+                        break
+                    else:
+                        new_primary = min(self.known_replicas.keys())
+                        self.primary_id = new_primary
+                        self.primary_host, self.primary_port = self.known_replicas[new_primary]
+                        logger.info(f"Updated primary info to {self.primary_id}; waiting for it to respond.")
+                else:
+                    logger.warning("No known replicas available to update primary info.")
             time.sleep(self.primary_check_interval)
+
         
     def become_primary(self):
         """
@@ -152,7 +187,7 @@ class PrimaryBackupManager(message_service_extensions_pb2_grpc.ReplicationServic
         """
         if self.role != Role.BACKUP:
             logger.warning(f"Received PushUpdate on a PRIMARY node ({self.replica_id}). Ignoring.")
-            return message_service_extensions_pb2.StatusResponse(
+            return message_service_pb2.StatusResponse(
                 success=False,
                 message="PushUpdate ignored by primary"
             )
@@ -166,12 +201,17 @@ class PrimaryBackupManager(message_service_extensions_pb2_grpc.ReplicationServic
         if update_type == "create_user":
             self.db.create_user(params["username"], params["hashed_password"])
         elif update_type == "delete_user":
-            self.db.delete_user(params["username"])
+            # Force deletion on backups so that any lingering account is removed.
+            self.db.force_delete_user(params["username"])
         elif update_type == "queue_message":
             self.db.queue_message(params["sender"], params["recipient"], params["content"])
+        elif update_type == "mark_messages_read":
+            # Expecting a JSON-encoded list of message IDs.
+            message_ids = json.loads(params["message_ids"])
+            self.db.mark_messages_as_read(message_ids)
         # Add other update types as needed...
         
-        return message_service_extensions_pb2.StatusResponse(
+        return message_service_pb2.StatusResponse(
             success=True,
             message="Update applied on backup"
         )
