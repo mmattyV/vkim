@@ -89,7 +89,7 @@ class ChatClient:
                     new_leader = self.discover_leader()
                     if new_leader and new_leader != self.leader_address:
                         # If a new leader is discovered, force logout and update channel.
-                        print(f"Leader change detected during RPC call: switching from {self.leader_address} to {new_leader}. Logging out current session.")
+                        logging.debug(f"Leader change detected during RPC call: switching from {self.leader_address} to {new_leader}. Logging out current session.")
                         self.username = None
                         self.channel.close()
                         self.update_channel_and_stub(new_leader)
