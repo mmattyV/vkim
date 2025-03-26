@@ -1,6 +1,8 @@
-// message_service_extensions.proto
 syntax = "proto3";
 package chat;
+
+// Import the original message service proto to reuse message types
+import "message_service.proto";
 
 service ReplicationService {
   // Leader election
@@ -111,10 +113,4 @@ message ReplicaInfo {
   int32 port = 3;
   bool is_alive = 4;
   int64 last_heartbeat = 5;
-}
-
-// Reuse existing message types
-message StatusResponse {
-  bool success = 1;
-  string message = 2;
 }

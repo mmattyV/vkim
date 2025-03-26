@@ -112,9 +112,13 @@ class ReplicatedChatServiceServicer(message_service_pb2_grpc.ChatServiceServicer
             hashed_password=hashed_password
         )
         
+        # Log the result for debugging
+        logger.info(f"Operation result: {result}")
+        
         # Check for redirection
         if isinstance(result, dict) and result.get("redirect"):
             # Set gRPC metadata for client redirection
+            logger.info(f"Redirecting to leader: {result['leader_id']}")
             context.set_trailing_metadata((
                 ('leader_host', result['leader_host']),
                 ('leader_port', str(result['leader_port'])),
@@ -128,22 +132,33 @@ class ReplicatedChatServiceServicer(message_service_pb2_grpc.ChatServiceServicer
             
         # Check for error
         if isinstance(result, dict) and result.get("error"):
+            logger.warning(f"Operation error: {result.get('message')}")
             return message_service_pb2.AuthResponse(
                 success=False,
                 message=result.get("message", "Unknown error")
             )
+        
+        # If we got a log_id (operation was successful)
+        if isinstance(result, int):
+            logger.info(f"Account created with log_id: {result}")
+            # Create user in local database (if leader) and invalidate cache
+            self.invalidate_cache(username)
             
-        # Create user in local database (if leader) and invalidate cache
-        self.invalidate_cache(username)
+            # Initialize message queue for streaming
+            self.message_queues[username] = []
+            
+            return message_service_pb2.AuthResponse(
+                success=True,
+                username=username,
+                message="Account created successfully",
+                unread_count=0
+            )
         
-        # Initialize message queue for streaming
-        self.message_queues[username] = []
-        
+        # Unknown result type
+        logger.error(f"Unknown result type: {type(result)}")
         return message_service_pb2.AuthResponse(
-            success=True,
-            username=username,
-            message="Account created successfully",
-            unread_count=0
+            success=False,
+            message="Internal server error"
         )
         
     def Login(self, request, context):

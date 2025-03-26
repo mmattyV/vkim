@@ -18,6 +18,8 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 from storage.db_storage import ChatDatabase
 
 # Import extended message service protos
+import message_service_pb2
+import message_service_pb2_grpc
 import message_service_extensions_pb2
 import message_service_extensions_pb2_grpc
 
@@ -52,12 +54,16 @@ class ReplicaManager:
         db_path = os.path.join(data_dir, f"{self.replica_id}.db")
         self.db = ChatDatabase(db_path)
         
+        # Locks for thread safety - MOVE THESE UP HERE
+        self.state_lock = threading.Lock()
+        self.replicas_lock = threading.Lock()
+        
         # State variables
         self.state = ReplicationState.FOLLOWER
         self.current_term = 0
         self.voted_for = None
         self.leader_id = None
-        self.last_heartbeat = 0
+        self.last_heartbeat = time.time()
         self.commit_index = 0
         self.last_applied = 0
         
@@ -83,10 +89,6 @@ class ReplicaManager:
         # gRPC server and stubs
         self.server = None
         self.stubs = {}  # Cached gRPC stubs for other replicas
-        
-        # Locks for thread safety
-        self.state_lock = threading.Lock()
-        self.replicas_lock = threading.Lock()
         
         # Background threads
         self.election_thread = None
@@ -135,6 +137,7 @@ class ReplicaManager:
             config_str = json.dumps(self.replicas)
             self.db.set_system_state('cluster_config', config_str)
             
+    # replication/replica_manager.py (modified start method)
     def start(self):
         """Start the replica manager and gRPC server."""
         if self.running:
@@ -144,14 +147,20 @@ class ReplicaManager:
         
         # Start gRPC server
         self.server = grpc.server(futures.ThreadPoolExecutor(max_workers=10))
+        
+        # Create and add the replication servicer
+        replication_servicer = ReplicationServicer(self)
         message_service_extensions_pb2_grpc.add_ReplicationServiceServicer_to_server(
-            ReplicationServicer(self), self.server
+            replication_servicer, self.server
         )
         
-        # Add secure/insecure port
-        self.server.add_insecure_port(f'{self.host}:{self.port}')
+        # Add secure/insecure port - be explicit about the bind address
+        server_address = f"{self.host}:{self.port}"
+        self.server.add_insecure_port(server_address)
+        
+        # Start the server
         self.server.start()
-        logger.info(f"Started gRPC server at {self.host}:{self.port}")
+        logger.info(f"Started gRPC server at {server_address}")
         
         # Start background threads
         self.start_election_timer()
@@ -187,17 +196,27 @@ class ReplicaManager:
         """Start the election timer thread."""
         def election_timer():
             while self.running:
-                if self.state != ReplicationState.LEADER:
-                    time_since_heartbeat = time.time() - self.last_heartbeat
-                    
-                    # Randomize the election timeout to avoid split votes
-                    timeout = self.leader_timeout + random.uniform(0, self.leader_timeout)
-                    
-                    if time_since_heartbeat > timeout:
-                        self.start_election()
+                with self.state_lock:  # Added lock for thread safety
+                    if self.state != ReplicationState.LEADER:
+                        time_since_heartbeat = time.time() - self.last_heartbeat
                         
-                time.sleep(1)  # Check every second
+                        # Randomize the election timeout to avoid split votes
+                        timeout = self.leader_timeout + random.uniform(0, self.leader_timeout)
+                        
+                        logger.debug(f"Time since last heartbeat: {time_since_heartbeat}s, timeout: {timeout}s")
+                        
+                        if time_since_heartbeat > timeout:
+                            logger.info(f"Election timeout triggered after {time_since_heartbeat}s")
+                            # Force transition to candidate state and start election
+                            self.state = ReplicationState.CANDIDATE
+                            # Release lock before calling start_election to avoid deadlock
                 
+                # Call outside of lock to avoid deadlocks
+                if self.state == ReplicationState.CANDIDATE:
+                    self.start_election()
+                            
+                time.sleep(1)  # Check every second
+                    
         self.election_thread = threading.Thread(target=election_timer, daemon=True)
         self.election_thread.start()
         
@@ -221,67 +240,79 @@ class ReplicaManager:
             self.state = ReplicationState.CANDIDATE
             self.save_state()
             
-            logger.info(f"Starting election for term {self.current_term}")
+        logger.info(f"Starting election for term {self.current_term}")
+        
+        # Count our own vote
+        votes_received = 1
+        votes_needed = (len(self.replicas) // 2) + 1
+        
+        logger.info(f"Need {votes_needed} votes to win, already have 1 (self)")
+        
+        # Get all replicas except ourselves
+        with self.replicas_lock:
+            other_replicas = {id: info for id, info in self.replicas.items() 
+                            if id != self.replica_id}
+        
+        # If we're the only replica, become leader immediately
+        if not other_replicas:
+            logger.info("No other replicas found, becoming leader immediately")
+            self.become_leader()
+            return
+        
+        # Create the vote request
+        request = message_service_extensions_pb2.VoteRequest(
+            candidate_id=self.replica_id,
+            term=self.current_term,
+            last_log_index=self.last_applied,
+            last_log_term=self.current_term - 1  # Simplified
+        )
+        
+        # Send vote requests to all other replicas
+        for replica_id, info in other_replicas.items():
+            logger.info(f"Requesting vote from {replica_id} at {info['host']}:{info['port']}")
             
-            # Prepare vote request
-            request = message_service_extensions_pb2.VoteRequest(
-                candidate_id=self.replica_id,
-                term=self.current_term,
-                last_log_index=self.last_applied,
-                last_log_term=self.current_term - 1  # Simplification
-            )
-            
-            # Send vote requests to all other replicas
-            votes_received = 1  # Vote for self
-            votes_needed = (len(self.replicas) // 2) + 1
-            
-            replicas_copy = {}
-            with self.replicas_lock:
-                replicas_copy = self.replicas.copy()
+            try:
+                # Create a new channel and stub for this request
+                channel = grpc.insecure_channel(f"{info['host']}:{info['port']}")
+                stub = message_service_extensions_pb2_grpc.ReplicationServiceStub(channel)
                 
-            for replica_id, info in replicas_copy.items():
-                if replica_id == self.replica_id:
-                    continue  # Skip self
+                # Send the request with a short timeout
+                response = stub.RequestVote(request, timeout=2)
+                
+                logger.info(f"Vote response from {replica_id}: {response.vote_granted}")
+                
+                # If they have a higher term, become a follower
+                if response.term > self.current_term:
+                    logger.info(f"Discovered higher term from {replica_id}, becoming follower")
+                    with self.state_lock:
+                        self.current_term = response.term
+                        self.state = ReplicationState.FOLLOWER
+                        self.voted_for = None
+                        self.save_state()
+                    return
+                
+                # Count the vote if granted
+                if response.vote_granted:
+                    votes_received += 1
+                    logger.info(f"Received vote from {replica_id}, now have {votes_received}/{votes_needed}")
                     
-                if not info.get('is_alive', False):
-                    continue  # Skip known dead replicas
-                    
-                try:
-                    stub = self.get_stub(replica_id)
-                    response = stub.RequestVote(request, timeout=2)
-                    
-                    logger.info(f"Vote response from {replica_id}: {response.vote_granted}")
-                    
-                    # If responder has higher term, become follower
-                    if response.term > self.current_term:
-                        with self.state_lock:
-                            self.current_term = response.term
-                            self.state = ReplicationState.FOLLOWER
-                            self.voted_for = None
-                            self.save_state()
+                    # If we have enough votes, become leader
+                    if votes_received >= votes_needed:
+                        logger.info(f"Won election with {votes_received}/{len(self.replicas)} votes")
+                        self.become_leader()
                         return
-                        
-                    # Count votes
-                    if response.vote_granted:
-                        votes_received += 1
-                        
-                except Exception as e:
-                    logger.error(f"Failed to request vote from {replica_id}: {e}")
-                    # Mark replica as potentially dead
-                    with self.replicas_lock:
-                        if replica_id in self.replicas:
-                            self.replicas[replica_id]['is_alive'] = False
-                            
-            # Check if we won the election
-            if votes_received >= votes_needed and self.state == ReplicationState.CANDIDATE:
-                logger.info(f"Won election for term {self.current_term} with {votes_received} votes")
-                self.become_leader()
-            else:
-                logger.info(f"Lost election for term {self.current_term}, got {votes_received} of {votes_needed} votes needed")
-                # Return to follower state
-                with self.state_lock:
-                    self.state = ReplicationState.FOLLOWER
-                    self.save_state()
+                
+            except Exception as e:
+                logger.error(f"Error requesting vote from {replica_id}: {e}")
+        
+        # If we get here, we didn't win the election
+        logger.info(f"Election for term {self.current_term} ended without a winner. Got {votes_received}/{votes_needed} votes needed.")
+        
+        # Return to follower state
+        with self.state_lock:
+            self.state = ReplicationState.FOLLOWER
+            self.voted_for = None
+            self.save_state()
                     
     def become_leader(self):
         """Transition to leader state."""
@@ -486,8 +517,17 @@ class ReplicaManager:
                             "leader_port": leader_info['port'],
                             "leader_id": self.leader_id
                         }
-                        
-            # No known leader
+            
+            # No known leader - try to become leader ourselves
+            logger.info("No leader available, attempting to become leader")
+            self.start_election()
+            
+            # Check if we became the leader
+            if self.state == ReplicationState.LEADER:
+                logger.info("Successfully became leader, processing operation")
+                return self.log_operation(operation_type, **params)
+                
+            # Still not the leader
             return {
                 "error": True,
                 "message": "No leader available, try again later"
@@ -507,9 +547,12 @@ class ReplicationServicer(message_service_extensions_pb2_grpc.ReplicationService
         candidate_id = request.candidate_id
         term = request.term
         
+        logger.info(f"Received vote request from {candidate_id} for term {term}")
+        
         with self.manager.state_lock:
             # If our term is higher, reject the vote
             if term < self.manager.current_term:
+                logger.info(f"Rejecting vote: our term ({self.manager.current_term}) > candidate term ({term})")
                 return message_service_extensions_pb2.VoteResponse(
                     vote_granted=False,
                     term=self.manager.current_term,
@@ -518,24 +561,30 @@ class ReplicationServicer(message_service_extensions_pb2_grpc.ReplicationService
                 
             # If term is newer, update our term
             if term > self.manager.current_term:
+                logger.info(f"Updating our term from {self.manager.current_term} to {term}")
                 self.manager.current_term = term
                 self.manager.voted_for = None
                 self.manager.state = ReplicationState.FOLLOWER
+                self.manager.last_heartbeat = time.time()  # Reset heartbeat timer
+                self.manager.save_state()
                 
             # Check if we can vote for this candidate
             can_vote = (self.manager.voted_for is None or 
-                       self.manager.voted_for == candidate_id)
+                    self.manager.voted_for == candidate_id)
             
             # Check if candidate's log is at least as up-to-date as ours
             log_ok = (request.last_log_term > self.manager.current_term or
-                     (request.last_log_term == self.manager.current_term and
-                      request.last_log_index >= self.manager.last_applied))
+                    (request.last_log_term == self.manager.current_term and
+                    request.last_log_index >= self.manager.last_applied))
             
             vote_granted = can_vote and log_ok
             
             if vote_granted:
+                logger.info(f"Granting vote to {candidate_id} for term {term}")
                 self.manager.voted_for = candidate_id
                 self.manager.save_state()
+            else:
+                logger.info(f"Rejecting vote to {candidate_id}: can_vote={can_vote}, log_ok={log_ok}")
                 
             return message_service_extensions_pb2.VoteResponse(
                 vote_granted=vote_granted,
@@ -600,7 +649,7 @@ class ReplicationServicer(message_service_extensions_pb2_grpc.ReplicationService
             self.manager.leader_id = new_leader_id
             self.manager.save_state()
             
-            return message_service_extensions_pb2.StatusResponse(
+            return message_service_pb2.StatusResponse(
                 success=True,
                 message=f"Leadership transferred to {new_leader_id}"
             )
@@ -689,8 +738,11 @@ class ReplicationServicer(message_service_extensions_pb2_grpc.ReplicationService
         host = request.host
         port = request.port
         
-        with self.manager.replicas_lock:
+        logger.info(f"Received JoinCluster request from {replica_id} at {host}:{port}")
+        
+        try:
             # Add the new replica
+            logger.info(f"Adding replica {replica_id} to cluster")
             self.manager.replicas[replica_id] = {
                 'host': host,
                 'port': port,
@@ -698,13 +750,24 @@ class ReplicationServicer(message_service_extensions_pb2_grpc.ReplicationService
                 'last_heartbeat': time.time()
             }
             
-            # Save updated configuration
-            self.manager.save_cluster_config()
+            logger.info(f"Current replicas: {list(self.manager.replicas.keys())}")
             
-        return message_service_extensions_pb2.StatusResponse(
-            success=True,
-            message=f"Added replica {replica_id} to cluster"
-        )
+            import message_service_pb2
+            response = message_service_pb2.StatusResponse(
+                success=True,
+                message=f"Added replica {replica_id} to cluster"
+            )
+            
+            logger.info(f"Sending success response to {replica_id}")
+            return response
+            
+        except Exception as e:
+            logger.error(f"Error in JoinCluster: {str(e)}", exc_info=True)
+            import message_service_pb2
+            return message_service_pb2.StatusResponse(
+                success=False,
+                message=f"Error: {str(e)}"
+            )
         
     def LeaveCluster(self, request, context):
         """Handle a request to leave the cluster."""
@@ -717,12 +780,12 @@ class ReplicationServicer(message_service_extensions_pb2_grpc.ReplicationService
                 # Save updated configuration
                 self.manager.save_cluster_config()
                 
-                return message_service_extensions_pb2.StatusResponse(
+                return message_service_pb2.StatusResponse(
                     success=True,
                     message=f"Removed replica {replica_id} from cluster"
                 )
             else:
-                return message_service_extensions_pb2.StatusResponse(
+                return message_service_pb2.StatusResponse(
                     success=False,
                     message=f"Replica {replica_id} not in cluster"
                 )

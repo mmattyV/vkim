@@ -5,6 +5,7 @@ import time
 import argparse
 import logging
 import signal
+import threading
 import grpc
 from concurrent import futures
 
@@ -25,6 +26,32 @@ from service.replicated_chat_service import ReplicatedChatServiceServicer
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
+def test_replica_communication(replica_manager):
+    """Test communication between replicas"""
+    with replica_manager.replicas_lock:
+        replicas = replica_manager.replicas.copy()
+    
+    for replica_id, info in replicas.items():
+        if replica_id == replica_manager.replica_id:
+            continue  # Skip self
+        
+        logger.info(f"Testing communication with {replica_id} at {info['host']}:{info['port']}")
+        try:
+            channel = grpc.insecure_channel(f"{info['host']}:{info['port']}")
+            stub = message_service_extensions_pb2_grpc.ReplicationServiceStub(channel)
+            
+            # Create a simple request just to test connectivity
+            request = message_service_extensions_pb2.ClusterInfoRequest(
+                replica_id=replica_manager.replica_id
+            )
+            
+            # Try to get cluster info with a timeout
+            response = stub.GetClusterInfo(request, timeout=3)
+            logger.info(f"Successfully communicated with {replica_id}")
+            
+        except Exception as e:
+            logger.error(f"Failed to communicate with {replica_id}: {e}")
+
 def serve(host='localhost', port=50051, replica_id=None, replica_port=None, 
           data_dir='./data', join_host=None, join_port=None):
     """Start the replicated chat server."""
@@ -43,30 +70,58 @@ def serve(host='localhost', port=50051, replica_id=None, replica_port=None,
     # Start the replica manager
     replica_manager.start()
     
-    # Join cluster if specified
-    if join_host and join_port:
-        try:
-            # Create a channel to the existing replica
-            join_channel = grpc.insecure_channel(f"{join_host}:{join_port}")
-            join_stub = message_service_extensions_pb2_grpc.ReplicationServiceStub(join_channel)
-            
-            # Send join request
-            request = message_service_extensions_pb2.JoinRequest(
-                replica_id=replica_manager.replica_id,
-                host=host,
-                port=replica_port
-            )
-            
-            response = join_stub.JoinCluster(request, timeout=5)
-            if response.success:
-                logger.info(f"Successfully joined the cluster: {response.message}")
-            else:
-                logger.warning(f"Failed to join cluster: {response.message}")
-                
-        except Exception as e:
-            logger.error(f"Error joining cluster: {e}")
-            logger.info("Continuing as a standalone replica...")
+    # Force an election attempt if this is the first replica
+    if not join_host and not join_port:
+        logger.info("First replica - initiating election in 5 seconds...")
+        def delayed_election():
+            time.sleep(5)
+            logger.info("Triggering election...")
+            replica_manager.start_election()
+        
+        threading.Thread(target=delayed_election, daemon=True).start()
     
+    # Modified join section in server.py
+    if join_host and join_port:
+        logger.info(f"Attempting to join cluster at {join_host}:{join_port}...")
+        
+        max_retries = 3
+        for retry in range(max_retries):
+            try:
+                # Create a channel with a shorter timeout
+                join_channel = grpc.insecure_channel(f"{join_host}:{join_port}")
+                join_stub = message_service_extensions_pb2_grpc.ReplicationServiceStub(join_channel)
+                
+                # Simple ping to test basic connectivity
+                logger.info("Testing basic connectivity...")
+                
+                # Prepare join request
+                request = message_service_extensions_pb2.JoinRequest(
+                    replica_id=replica_manager.replica_id,
+                    host=host,
+                    port=replica_port
+                )
+                
+                # Try with an even shorter timeout first
+                logger.info(f"Sending JoinCluster request (attempt {retry+1}/{max_retries})...")
+                response = join_stub.JoinCluster(request, timeout=5)
+                
+                if response.success:
+                    logger.info(f"Successfully joined the cluster: {response.message}")
+                    # Test communication with other replicas after joining
+                    threading.Thread(target=lambda: test_replica_communication(replica_manager), daemon=True).start()
+                    break
+                else:
+                    logger.warning(f"Failed to join cluster: {response.message}")
+                    
+            except grpc.RpcError as e:
+                logger.error(f"gRPC error joining cluster (attempt {retry+1}): {e.code()}: {e.details()}")
+                time.sleep(1)  # Wait before retrying
+            except Exception as e:
+                logger.error(f"Error joining cluster: {e}")
+                break
+        else:
+            logger.info("Failed all attempts to join cluster. Continuing as a standalone replica...")
+            
     # Create a gRPC server for client communication
     server = grpc.server(futures.ThreadPoolExecutor(max_workers=10))
     
