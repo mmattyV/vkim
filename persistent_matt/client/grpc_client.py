@@ -44,7 +44,7 @@ class ChatClient:
         self.leader_address = address
         self.channel = grpc.insecure_channel(address)
         self.stub = message_service_pb2_grpc.ChatServiceStub(self.channel)
-        logging.debug(f"Connected to leader at {address}")
+        print(f"Connected to leader at {address}")
 
     def discover_leader(self):
         """
@@ -83,7 +83,7 @@ class ChatClient:
                 return func(*args, **kwargs)
             except grpc.RpcError as e:
                 if e.code() == grpc.StatusCode.UNAVAILABLE:
-                    logging.debug("RPC call unavailable, retrying...")
+                    print("RPC call unavailable, retrying...")
                     time.sleep(2)
                     retry_count += 1
                     new_leader = self.discover_leader()
@@ -96,7 +96,7 @@ class ChatClient:
                     continue
                 else:
                     raise e
-        logging.debug("RPC call failed after several retries.")
+        print("RPC call failed after several retries.")
         return None
 
     def periodic_leader_check(self):
@@ -140,26 +140,26 @@ class ChatClient:
                 req = message_service_pb2.UsernameRequest(username=self.username)
                 try:
                     for msg in self.stub.ReceiveMessages(req):
-                        logging.debug(f"\n[New Message from {msg.sender}]: {msg.content} ({msg.timestamp})")
+                        print(f"\n[New Message from {msg.sender}]: {msg.content} ({msg.timestamp})")
                 except grpc.RpcError as e:
-                    logging.debug("Message stream ended:", e)
+                    print("Message stream ended:", e)
             self.receive_thread = threading.Thread(target=receive, daemon=True)
             self.receive_thread.start()
 
     def try_create_account(self):
         username = input("Enter username: ").strip()
         if not username:
-            logging.debug("Username cannot be empty.")
+            print("Username cannot be empty.")
             return
         check_req = message_service_pb2.UsernameRequest(username=username)
         check_resp = self.safe_rpc_call(self.stub.CheckUsername, check_req)
         if check_resp and check_resp.exists:
-            logging.debug("Account already exists. Please log in.")
+            print("Account already exists. Please log in.")
             self.log_in()
         else:
             password = input("Enter new password: ").strip()
             if not password:
-                logging.debug("Password cannot be empty.")
+                print("Password cannot be empty.")
                 return
             hashed_password = hash_password(password)
             create_req = message_service_pb2.CreateAccountRequest(username=username, hashed_password=hashed_password)
@@ -167,17 +167,17 @@ class ChatClient:
             if create_resp and create_resp.success:
                 self.username = create_resp.username
                 self.number_unread_messages = create_resp.unread_count
-                logging.debug(f"Account created successfully. Logged in as {self.username}.")
-                logging.debug(f"Unread messages: {self.number_unread_messages}")
+                print(f"Account created successfully. Logged in as {self.username}.")
+                print(f"Unread messages: {self.number_unread_messages}")
                 self.start_receiving()
             else:
-                logging.debug(f"Account creation failed: {create_resp.message if create_resp else 'No response'}")
+                print(f"Account creation failed: {create_resp.message if create_resp else 'No response'}")
 
     def log_in(self):
         username = input("Enter username: ").strip()
         password = input("Enter password: ").strip()
         if not username or not password:
-            logging.debug("Username and password cannot be empty.")
+            print("Username and password cannot be empty.")
             return
         hashed_password = hash_password(password)
         login_req = message_service_pb2.LoginRequest(username=username, hashed_password=hashed_password)
@@ -185,15 +185,15 @@ class ChatClient:
         if login_resp and login_resp.success:
             self.username = login_resp.username
             self.number_unread_messages = login_resp.unread_count
-            logging.debug(f"Logged in as {self.username}.")
-            logging.debug(f"Unread messages: {self.number_unread_messages}")
+            print(f"Logged in as {self.username}.")
+            print(f"Unread messages: {self.number_unread_messages}")
             self.start_receiving()
         else:
-            logging.debug(f"Login failed: {login_resp.message if login_resp else 'No response'}")
+            print(f"Login failed: {login_resp.message if login_resp else 'No response'}")
 
     def list_accounts(self):
         if not self.username:
-            logging.debug("You must be logged in to list accounts.")
+            print("You must be logged in to list accounts.")
             return
         pattern = input("Enter a username pattern (default '*'): ").strip()
         if pattern == "":
@@ -201,100 +201,100 @@ class ChatClient:
         req = message_service_pb2.ListAccountsRequest(username=self.username, pattern=pattern)
         resp = self.safe_rpc_call(self.stub.ListAccounts, req)
         if resp and resp.success:
-            logging.debug("Matching accounts:")
+            print("Matching accounts:")
             for account in resp.accounts:
-                logging.debug(account)
-            logging.debug(resp.message)
+                print(account)
+            print(resp.message)
         else:
-            logging.debug(f"Failed to list accounts: {resp.message if resp else 'No response'}")
+            print(f"Failed to list accounts: {resp.message if resp else 'No response'}")
 
     def send_chat_message(self):
         if not self.username:
-            logging.debug("You must be logged in to send messages.")
+            print("You must be logged in to send messages.")
             return
         recipient = input("Enter recipient username: ").strip()
         message = input("Enter message: ").strip()
         if not recipient or not message:
-            logging.debug("Recipient and message cannot be empty.")
+            print("Recipient and message cannot be empty.")
             return
         req = message_service_pb2.SendMessageRequest(sender=self.username, recipient=recipient, content=message)
         resp = self.safe_rpc_call(self.stub.SendMessage, req)
-        logging.debug(resp.message if resp else "No response")
+        print(resp.message if resp else "No response")
 
     def view_messages(self):
         if not self.username:
-            logging.debug("You must be logged in to view messages.")
+            print("You must be logged in to view messages.")
             return
         count_str = input("Enter number of messages to retrieve: ").strip()
         try:
             count = int(count_str)
         except ValueError:
-            logging.debug("Invalid number.")
+            print("Invalid number.")
             return
         req = message_service_pb2.ViewMessagesRequest(username=self.username, count=count)
         resp = self.safe_rpc_call(self.stub.ViewMessages, req)
         if resp and resp.success:
-            logging.debug(resp.message)
+            print(resp.message)
             for msg in resp.messages:
-                logging.debug(f"From {msg.sender}: {msg.content} (at {msg.timestamp})")
+                print(f"From {msg.sender}: {msg.content} (at {msg.timestamp})")
         else:
-            logging.debug(f"Failed to view messages: {resp.message if resp else 'No response'}")
+            print(f"Failed to view messages: {resp.message if resp else 'No response'}")
 
     def delete_messages(self):
         if not self.username:
-            logging.debug("You must be logged in to delete messages.")
+            print("You must be logged in to delete messages.")
             return
         delete_info = input("Enter 'ALL' or number of messages to delete: ").strip()
         if not delete_info:
-            logging.debug("Delete info cannot be empty.")
+            print("Delete info cannot be empty.")
             return
         req = message_service_pb2.DeleteMessagesRequest(username=self.username, delete_info=delete_info.upper())
         resp = self.safe_rpc_call(self.stub.DeleteMessages, req)
-        logging.debug(resp.message if resp else "No response")
+        print(resp.message if resp else "No response")
 
     def delete_account(self):
         if not self.username:
-            logging.debug("You must be logged in to delete your account.")
+            print("You must be logged in to delete your account.")
             return
         confirmation = input("Are you sure you want to delete your account? (yes/no): ").strip().lower()
         if confirmation != "yes":
-            logging.debug("Account deletion cancelled.")
+            print("Account deletion cancelled.")
             return
         req = message_service_pb2.UsernameRequest(username=self.username)
         resp = self.safe_rpc_call(self.stub.DeleteAccount, req)
         if resp and resp.success:
-            logging.debug(resp.message)
+            print(resp.message)
             self.username = None
         else:
-            logging.debug(f"Failed to delete account: {resp.message if resp else 'No response'}")
+            print(f"Failed to delete account: {resp.message if resp else 'No response'}")
 
     def logout(self):
         if not self.username:
-            logging.debug("You are not logged in.")
+            print("You are not logged in.")
             return
         req = message_service_pb2.LogoutRequest(username=self.username)
         resp = self.safe_rpc_call(self.stub.Logout, req)
         if resp and resp.success:
-            logging.debug(resp.message)
+            print(resp.message)
             self.username = None
         else:
-            logging.debug(f"Logout failed: {resp.message if resp else 'No response'}")
+            print(f"Logout failed: {resp.message if resp else 'No response'}")
 
     def run(self):
         while self.running:
-            logging.debug("\nChoose an operation:")
+            print("\nChoose an operation:")
             if not self.username:
-                logging.debug("1. Create Account")
-                logging.debug("2. Log In")
-                logging.debug("3. Exit")
+                print("1. Create Account")
+                print("2. Log In")
+                print("3. Exit")
             else:
-                logging.debug("1. List Accounts")
-                logging.debug("2. Send Message")
-                logging.debug("3. View Messages")
-                logging.debug("4. Delete Messages")
-                logging.debug("5. Delete Account")
-                logging.debug("6. Logout")
-                logging.debug("7. Exit")
+                print("1. List Accounts")
+                print("2. Send Message")
+                print("3. View Messages")
+                print("4. Delete Messages")
+                print("5. Delete Account")
+                print("6. Logout")
+                print("7. Exit")
             choice = input("Enter choice number: ").strip()
             if not self.username:
                 if choice == "1":
@@ -305,7 +305,7 @@ class ChatClient:
                     self.running = False
                     break
                 else:
-                    logging.debug("Invalid choice.")
+                    print("Invalid choice.")
             else:
                 if choice == "1":
                     self.list_accounts()
@@ -323,24 +323,24 @@ class ChatClient:
                     self.running = False
                     break
                 else:
-                    logging.debug("Invalid choice.")
-        logging.debug("Exiting client...")
+                    print("Invalid choice.")
+        print("Exiting client...")
         self.channel.close()
 
     def try_create_account(self):
         username = input("Enter username: ").strip()
         if not username:
-            logging.debug("Username cannot be empty.")
+            print("Username cannot be empty.")
             return
         check_req = message_service_pb2.UsernameRequest(username=username)
         check_resp = self.safe_rpc_call(self.stub.CheckUsername, check_req)
         if check_resp and check_resp.exists:
-            logging.debug("Account already exists. Please log in.")
+            print("Account already exists. Please log in.")
             self.log_in()
         else:
             password = input("Enter new password: ").strip()
             if not password:
-                logging.debug("Password cannot be empty.")
+                print("Password cannot be empty.")
                 return
             hashed_password = hash_password(password)
             create_req = message_service_pb2.CreateAccountRequest(username=username, hashed_password=hashed_password)
@@ -348,11 +348,11 @@ class ChatClient:
             if create_resp and create_resp.success:
                 self.username = create_resp.username
                 self.number_unread_messages = create_resp.unread_count
-                logging.debug(f"Account created successfully. Logged in as {self.username}.")
-                logging.debug(f"Unread messages: {self.number_unread_messages}")
+                print(f"Account created successfully. Logged in as {self.username}.")
+                print(f"Unread messages: {self.number_unread_messages}")
                 self.start_receiving()
             else:
-                logging.debug(f"Account creation failed: {create_resp.message if create_resp else 'No response'}")
+                print(f"Account creation failed: {create_resp.message if create_resp else 'No response'}")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="gRPC Chat Client (Leader-Aware)")
