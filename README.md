@@ -267,8 +267,8 @@ The system follows a client-server architecture with multiple server replicas to
 
 1. Clone the repository:
    ```
-   git clone https://github.com/yourusername/persistent-chat.git
-   cd persistent-chat
+   git clone https://github.com/mmattyV/vkim.git
+   cd vkim/persistent_final
    ```
 
 2. Install dependencies:
@@ -282,6 +282,7 @@ The system follows a client-server architecture with multiple server replicas to
 
 
    ```
+   cd server
    python grpc_server.py --port 50051 --replicas "localhost:50052,localhost:50053"
    python grpc_server.py --port 50052 --replicas "localhost:50051,localhost:50053"
    python grpc_server.py --port 50053 --replicas "localhost:50051,localhost:50052”
@@ -293,6 +294,7 @@ For cross-machine deployment, use the actual hostnames instead of localhost.
 
 Run the GUI client:
 ```
+cd client
 python grpc_gui.py --host localhost --port 50052 --replicas "localhost:50051,localhost:50053,localhost:50052"
 ```
 
