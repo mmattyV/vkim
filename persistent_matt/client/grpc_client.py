@@ -44,7 +44,7 @@ class ChatClient:
         self.leader_address = address
         self.channel = grpc.insecure_channel(address)
         self.stub = message_service_pb2_grpc.ChatServiceStub(self.channel)
-        print(f"Connected to leader at {address}")
+        logging.debug(f"Connected to leader at {address}")
 
     def discover_leader(self):
         """
@@ -142,7 +142,7 @@ class ChatClient:
                     for msg in self.stub.ReceiveMessages(req):
                         print(f"\n[New Message from {msg.sender}]: {msg.content} ({msg.timestamp})")
                 except grpc.RpcError as e:
-                    print("Message stream ended:", e)
+                    logging.debug("Message stream ended:", e)
             self.receive_thread = threading.Thread(target=receive, daemon=True)
             self.receive_thread.start()
 
