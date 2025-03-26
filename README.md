@@ -275,6 +275,21 @@ The system follows a client-server architecture with multiple server replicas to
    ```
    python setup.py
    ```
+## Create and Activate the Virtual Environment
+
+#### On Windows:
+```bash
+python -m venv venv
+venv\Scripts\activate
+```
+
+#### On macOS/Linux:
+```bash
+python -m venv venv
+source venv/bin/activate
+```
+
+---
 
 ## Usage
 
